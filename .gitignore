@@ -1,14 +1,17 @@
 node_modules/
 dist/
 coverage/
+reports/
+
+# Variables de entorno: solo se versiona .env.example
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Cliente generado por Prisma
+prisma/generated/
+
 *.log
 .DS_Store
 .vscode/
 .idea/
-*.swp
-*.swo
-reports/
-build/

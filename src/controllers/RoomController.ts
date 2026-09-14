@@ -1,47 +1,61 @@
-import { Request, Response, NextFunction } from 'express';
-import { RoomService, CreateRoomInput } from '../services/RoomService';
+import { NextFunction, Request, Response } from 'express';
 
-const roomService = new RoomService();
+import { ValidationError } from '../models/errors';
+import { RoomService } from '../services/RoomService';
+import { parseId } from './UserController';
 
 export class RoomController {
-  async createRoom(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const input: CreateRoomInput = req.body;
+  constructor(private readonly roomService: RoomService) {}
 
-      if (!input.name || !input.capacity || input.hourlyRate === undefined) {
-        res.status(400).json({
-          error: 'Missing required fields: name, capacity, hourlyRate',
-        });
-        return;
+  createRoom = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { name, description, capacity, hourlyRate } = req.body ?? {};
+
+      if (!name || capacity === undefined || hourlyRate === undefined) {
+        throw new ValidationError(
+          'Missing required fields: name, capacity, hourlyRate'
+        );
       }
 
-      const room = await roomService.createRoom(input);
+      const room = await this.roomService.createRoom({
+        name: String(name),
+        description: description === undefined ? null : String(description),
+        capacity: Number(capacity),
+        hourlyRate: Number(hourlyRate),
+      });
+
       res.status(201).json(room);
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async getAllRooms(req: Request, res: Response, next: NextFunction): Promise<void> {
+  getAllRooms = async (
+    _req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const rooms = await roomService.getAllRooms();
-      res.json(rooms);
+      res.json(await this.roomService.getAllRooms());
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async getRoomById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  getRoomById = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const { id } = req.params;
-      const roomId = parseInt(String(id), 10);
+      const room = await this.roomService.getRoomById(
+        parseId(req.params.id, 'room ID')
+      );
 
-      if (isNaN(roomId)) {
-        res.status(400).json({ error: 'Invalid room ID' });
-        return;
-      }
-
-      const room = await roomService.getRoomById(roomId);
       if (!room) {
         res.status(404).json({ error: 'Room not found' });
         return;
@@ -51,28 +65,30 @@ export class RoomController {
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async checkAvailability(req: Request, res: Response, next: NextFunction): Promise<void> {
+  checkAvailability = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const { id } = req.params;
-      const { startDate, endDate } = req.body;
-      const roomId = parseInt(String(id), 10);
+      const roomId = parseId(req.params.id, 'room ID');
+      const { startDate, endDate } = req.body ?? {};
 
-      if (isNaN(roomId) || !startDate || !endDate) {
-        res.status(400).json({ error: 'Invalid parameters' });
-        return;
+      if (!startDate || !endDate) {
+        throw new ValidationError('Missing required fields: startDate, endDate');
       }
 
-      const isAvailable = await roomService.checkRoomAvailability(
+      const isAvailable = await this.roomService.checkRoomAvailability(
         roomId,
-        new Date(startDate),
-        new Date(endDate)
+        new Date(String(startDate)),
+        new Date(String(endDate))
       );
 
       res.json({ roomId, isAvailable });
     } catch (error) {
       next(error);
     }
-  }
+  };
 }

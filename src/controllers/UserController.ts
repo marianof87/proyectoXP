@@ -1,38 +1,69 @@
-import { Request, Response, NextFunction } from 'express';
-import { UserService, RegisterUserInput } from '../services/UserService';
+import { NextFunction, Request, Response } from 'express';
 
-const userService = new UserService();
+import { ValidationError } from '../models/errors';
+import { UserService } from '../services/UserService';
 
 export class UserController {
-  async register(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const input: RegisterUserInput = req.body;
+  constructor(private readonly userService: UserService) {}
 
-      if (!input.email || !input.name || !input.password) {
-        res.status(400).json({
-          error: 'Missing required fields: email, name, password',
-        });
-        return;
+  register = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { email, name, password } = req.body ?? {};
+
+      if (!email || !name || !password) {
+        throw new ValidationError(
+          'Missing required fields: email, name, password'
+        );
       }
 
-      const user = await userService.registerUser(input);
+      const user = await this.userService.registerUser({
+        email: String(email),
+        name: String(name),
+        password: String(password),
+      });
+
       res.status(201).json(user);
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async getUserById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  login = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const { id } = req.params;
-      const userId = parseInt(String(id), 10);
+      const { email, password } = req.body ?? {};
 
-      if (isNaN(userId)) {
-        res.status(400).json({ error: 'Invalid user ID' });
-        return;
+      if (!email || !password) {
+        throw new ValidationError('Missing required fields: email, password');
       }
 
-      const user = await userService.getUserById(userId);
+      const user = await this.userService.login({
+        email: String(email),
+        password: String(password),
+      });
+
+      res.json(user);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getUserById = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const userId = parseId(req.params.id, 'user ID');
+
+      const user = await this.userService.getUserById(userId);
       if (!user) {
         res.status(404).json({ error: 'User not found' });
         return;
@@ -42,23 +73,44 @@ export class UserController {
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async addBalance(req: Request, res: Response, next: NextFunction): Promise<void> {
+  addBalance = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const { id } = req.params;
-      const { amount } = req.body;
-      const userId = parseInt(String(id), 10);
+      const userId = parseId(req.params.id, 'user ID');
+      const { amount } = req.body ?? {};
 
-      if (isNaN(userId) || amount === undefined) {
-        res.status(400).json({ error: 'Invalid user ID or amount' });
-        return;
+      if (typeof amount !== 'number') {
+        throw new ValidationError('Amount must be a number');
       }
 
-      const user = await userService.addBalance(userId, amount);
-      res.json(user);
+      res.json(await this.userService.addBalance(userId, amount));
     } catch (error) {
       next(error);
     }
-  }
+  };
 }
+
+/**
+ * Compartido por los controladores: valida un id numérico de la ruta.
+ *
+ * Express tipa los parámetros como `string | string[]` (una ruta puede
+ * repetir un nombre), así que solo se acepta la forma simple.
+ */
+export const parseId = (
+  raw: string | string[] | undefined,
+  label: string
+): number => {
+  if (typeof raw !== 'string') {
+    throw new ValidationError(`Invalid ${label}`);
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || String(parsed) !== raw.trim()) {
+    throw new ValidationError(`Invalid ${label}`);
+  }
+  return parsed;
+};

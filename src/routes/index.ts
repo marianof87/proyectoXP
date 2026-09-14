@@ -1,48 +1,34 @@
 import express, { Router } from 'express';
-import { UserController } from '../controllers/UserController';
-import { RoomController } from '../controllers/RoomController';
+
+import { Services } from '../container';
 import { ReservationController } from '../controllers/ReservationController';
+import { RoomController } from '../controllers/RoomController';
+import { UserController } from '../controllers/UserController';
 
-const router: Router = express.Router();
+/** Monta las rutas sobre los servicios recibidos (sin singletons globales). */
+export const createRouter = (services: Services): Router => {
+  const router: Router = express.Router();
 
-const userController = new UserController();
-const roomController = new RoomController();
-const reservationController = new ReservationController();
+  const users = new UserController(services.userService);
+  const rooms = new RoomController(services.roomService);
+  const reservations = new ReservationController(services.reservationService);
 
-// User routes
-router.post('/users/register', (req, res, next) =>
-  userController.register(req, res, next)
-);
-router.get('/users/:id', (req, res, next) =>
-  userController.getUserById(req, res, next)
-);
-router.post('/users/:id/balance', (req, res, next) =>
-  userController.addBalance(req, res, next)
-);
+  // Usuarios
+  router.post('/users/register', users.register);
+  router.post('/users/login', users.login);
+  router.get('/users/:id', users.getUserById);
+  router.post('/users/:id/balance', users.addBalance);
 
-// Room routes
-router.post('/rooms', (req, res, next) =>
-  roomController.createRoom(req, res, next)
-);
-router.get('/rooms', (req, res, next) =>
-  roomController.getAllRooms(req, res, next)
-);
-router.get('/rooms/:id', (req, res, next) =>
-  roomController.getRoomById(req, res, next)
-);
-router.post('/rooms/:id/check-availability', (req, res, next) =>
-  roomController.checkAvailability(req, res, next)
-);
+  // Salas
+  router.post('/rooms', rooms.createRoom);
+  router.get('/rooms', rooms.getAllRooms);
+  router.get('/rooms/:id', rooms.getRoomById);
+  router.post('/rooms/:id/check-availability', rooms.checkAvailability);
 
-// Reservation routes
-router.post('/reservations', (req, res, next) =>
-  reservationController.bookRoom(req, res, next)
-);
-router.get('/users/:userId/reservations', (req, res, next) =>
-  reservationController.getUserReservations(req, res, next)
-);
-router.delete('/reservations/:id', (req, res, next) =>
-  reservationController.cancelReservation(req, res, next)
-);
+  // Reservas
+  router.post('/reservations', reservations.bookRoom);
+  router.get('/users/:userId/reservations', reservations.getUserReservations);
+  router.delete('/reservations/:id', reservations.cancelReservation);
 
-export default router;
+  return router;
+};

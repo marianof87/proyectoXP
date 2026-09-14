@@ -1,143 +1,97 @@
-import { Given, When, Then } from '@cucumber/cucumber';
-import { PrismaClient } from '@prisma/client';
-import { UserService } from '../../src/services/UserService';
-import bcrypt from 'bcrypt';
+/** Feature 02 - Gestión del balance de la cuenta (HU-02). */
 
-const prisma = new PrismaClient();
-const userService = new UserService();
+import { Given, Then, When } from '@cucumber/cucumber';
+import assert from 'assert';
 
-interface TestContext {
-  lastError?: Error;
-  lastBalance?: number;
-  users: Map<string, any>;
+import { MundoCoworking } from '../support/world';
+
+Given(
+  'que el usuario {string} tiene un balance de {int}',
+  async function (this: MundoCoworking, nombre: string, balance: number) {
+    await this.asegurarUsuario(nombre, balance);
+  }
+);
+
+Given(
+  'que la sala {string} cuesta {int} por hora',
+  async function (this: MundoCoworking, nombreSala: string, coste: number) {
+    // La sala puede existir ya (feature 03) o no (features 02 y 06): en el
+    // segundo caso se crea directamente con la tarifa pedida.
+    if (!this.salas.has(nombreSala)) {
+      await this.asegurarSala(nombreSala, coste);
+      return;
+    }
+
+    const sala = this.obtenerSala(nombreSala);
+    const actualizada = await this.uow.rooms.updateHourlyRate(sala.id, coste);
+    this.salas.set(nombreSala, { ...sala, hourlyRate: actualizada.hourlyRate });
+  }
+);
+
+/** Recarga de saldo: comparten implementación el caso normal y el negativo. */
+async function anadirSaldo(
+  mundo: MundoCoworking,
+  nombre: string,
+  importe: number
+): Promise<void> {
+  const usuario = mundo.obtenerUsuario(nombre);
+  const actualizado = await mundo.capturar(() =>
+    mundo.services.userService.addBalance(usuario.id, importe)
+  );
+
+  if (actualizado) {
+    mundo.usuarios.set(nombre, actualizado);
+    mundo.ultimoBalance = actualizado.balance;
+  }
 }
 
-let context: TestContext = {
-  users: new Map(),
-};
-
-Given('user {string} has balance {int}', async function (userName: string, balance: number) {
-  let user = context.users.get(userName);
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email: `${userName.toLowerCase()}-${Date.now()}@example.com`,
-        name: userName,
-        password: await bcrypt.hash('Password123!', 10),
-        role: 'USER',
-        balance,
-      },
-    });
-  } else {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: { balance },
-    });
-  }
-  context.users.set(userName, user);
-});
-
-When('{string} adds {int} to her balance', async function (userName: string, amount: number) {
-  const user = context.users.get(userName);
-  if (!user) {
-    throw new Error(`User ${userName} not found`);
-  }
-
-  try {
-    const result = await userService.addBalance(user.id, amount);
-    context.lastBalance = result.balance;
-    context.users.set(userName, result);
-  } catch (error) {
-    context.lastError = error as Error;
-  }
-});
-
-Then('her new balance should be {int}', function (expectedBalance: number) {
-  if (context.lastBalance !== expectedBalance) {
-    throw new Error(
-      `Expected balance ${expectedBalance}, got ${context.lastBalance}`
-    );
-  }
-});
-
-Then('the transaction should be recorded', function () {
-  // In a real scenario, you'd check audit logs or transaction history
-  // For now, we just verify the balance was updated
-  if (context.lastBalance === undefined) {
-    throw new Error('No transaction recorded');
-  }
-});
-
 When(
-  '{string} tries to add {int} to her balance',
-  async function (userName: string, amount: number) {
-    const user = context.users.get(userName);
-    if (!user) {
-      throw new Error(`User ${userName} not found`);
-    }
-
-    try {
-      const result = await userService.addBalance(user.id, amount);
-      context.lastBalance = result.balance;
-    } catch (error) {
-      context.lastError = error as Error;
-    }
+  '{string} añade {int} a su balance',
+  async function (this: MundoCoworking, nombre: string, importe: number) {
+    await anadirSaldo(this, nombre, importe);
   }
 );
 
-Then('the operation should fail', function () {
-  if (!context.lastError) {
-    throw new Error('Expected operation to fail but it succeeded');
-  }
-});
-
-Then('the error message should be {string}', function (expectedMessage: string) {
-  if (context.lastError?.message !== expectedMessage) {
-    throw new Error(
-      `Expected error message "${expectedMessage}", got "${context.lastError?.message}"`
-    );
-  }
-});
-
 When(
-  '{string} books {string} from {string} to {string} on {string}',
-  async function (userName: string, roomName: string, startTime: string, endTime: string, date: string) {
-    // This step is handled in reservation.steps.ts
-    // Just ensuring the balance is updated after booking
-    const user = context.users.get(userName);
-    if (user) {
-      const updatedUser = await prisma.user.findUnique({
-        where: { id: user.id },
-      });
-      if (updatedUser) {
-        context.users.set(userName, updatedUser);
-      }
-    }
+  '{string} intenta añadir {int} a su balance',
+  async function (this: MundoCoworking, nombre: string, importe: number) {
+    await anadirSaldo(this, nombre, importe);
   }
 );
 
-Then('his balance should be reduced by {int}', async function (expectedReduction: number) {
-  // Get the updated user from DB to check balance reduction
-  const users = Array.from(context.users.values());
-  if (users.length > 0) {
-    const latestUser = await prisma.user.findUnique({
-      where: { id: users[0].id },
-    });
-    if (latestUser && context.lastBalance !== undefined) {
-      const actualReduction = context.lastBalance - latestUser.balance;
-      if (actualReduction !== expectedReduction) {
-        throw new Error(
-          `Expected balance reduction of ${expectedReduction}, got ${actualReduction}`
-        );
-      }
-    }
+Then(
+  'su nuevo balance debe ser {int}',
+  function (this: MundoCoworking, esperado: number) {
+    if (this.ultimoError) throw this.ultimoError;
+    assert.strictEqual(this.ultimoBalance, esperado);
   }
+);
+
+Then('la operación debe quedar registrada', function (this: MundoCoworking) {
+  assert.notStrictEqual(
+    this.ultimoBalance,
+    undefined,
+    'No se registró ningún cambio de saldo'
+  );
 });
 
-Then('his new balance should be {int}', function (expectedBalance: number) {
-  if (context.lastBalance !== expectedBalance) {
-    throw new Error(
-      `Expected new balance ${expectedBalance}, got ${context.lastBalance}`
+Then(
+  'su balance debe reducirse en {int}',
+  async function (this: MundoCoworking, reduccionEsperada: number) {
+    if (this.ultimoError) throw this.ultimoError;
+    assert.notStrictEqual(
+      this.balanceAntesDeReservar,
+      undefined,
+      'En este escenario no se realizó ninguna reserva'
     );
+
+    // Se relee del almacén: comprueba que la reserva descontó de verdad.
+    const [nombreUsuario] = Array.from(this.usuarios.keys());
+    const usuario = await this.refrescarUsuario(nombreUsuario);
+
+    const reduccionReal = (this.balanceAntesDeReservar ?? 0) - usuario.balance;
+    assert.strictEqual(reduccionReal, reduccionEsperada);
+
+    this.ultimoBalance = usuario.balance;
   }
-});
+);

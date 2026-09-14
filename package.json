@@ -1,18 +1,19 @@
 {
   "name": "proyectoxp",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Backend de reserva de espacios de coworking (XP + BDD)",
+  "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:e2e": "cucumber-js",
-    "test:e2e:watch": "cucumber-js --watch",
-    "lint": "eslint src tests --ext .ts",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
     "prisma:reset": "prisma migrate reset"
@@ -22,26 +23,29 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
     "@cucumber/cucumber": "^13.2.1",
-    "@prisma/client": "^7.10.0",
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.5.1",
-    "bcrypt": "^6.0.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "eslint": "^10.10.0",
     "jest": "^30.5.1",
-    "prisma": "^8.0.0-rc.15",
+    "prisma": "^6.16.2",
     "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3"
   },
-  "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
-    "@types/cors": "^2.8.19",
-    "@typescript-eslint/eslint-plugin": "^8.70.0",
-    "@typescript-eslint/parser": "^8.70.0",
-    "eslint": "^10.10.0"
+  "engines": {
+    "node": ">=20"
   }
 }

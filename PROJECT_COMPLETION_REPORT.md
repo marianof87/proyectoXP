@@ -82,7 +82,7 @@ src/db.ts                        # Configuración de Prisma
 ### ✅ 7. Configuración de Compilación
 **Archivos:**
 - `tsconfig.json` - Configuración de TypeScript (Strict Mode)
-- `.eslintrc.json` - Configuración de linting
+- `eslint.config.js` - Configuración de linting (formato *flat*, ESLint >= 9)
 - `jest.config.js` - Configuración de Jest
 - `cucumber.js` - Configuración de Cucumber
 
@@ -174,7 +174,7 @@ proyectoxp/
 │   ├── tsconfig.json                   # Configuración TypeScript
 │   ├── jest.config.js                  # Configuración Jest
 │   ├── cucumber.js                     # Configuración Cucumber
-│   ├── .eslintrc.json                  # Configuración ESLint
+│   ├── eslint.config.js                # Configuración ESLint (flat config)
 │   ├── .env.example                    # Variables de ejemplo
 │   └── .gitignore                      # Archivos a ignorar
 
@@ -260,7 +260,7 @@ npm run build                  # Compilar TypeScript
 # Pruebas
 npm test                       # Tests unitarios (Jest)
 npm test:watch                 # Tests en modo watch
-npm test:coverage              # Cobertura de tests
+npm run test:coverage          # Cobertura de tests
 npm run test:e2e               # Pruebas BDD (Cucumber)
 npm run test:e2e:watch         # Pruebas BDD en watch
 

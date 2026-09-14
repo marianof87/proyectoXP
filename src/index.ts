@@ -1,52 +1,20 @@
-import express, { Express, Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+/** Punto de entrada de la API REST. */
+
 import dotenv from 'dotenv';
-import { prisma } from './db';
-import routes from './routes';
 
 dotenv.config();
 
-const app: Express = express();
-const port = process.env.PORT || 3000;
+import { createApp } from './app';
+import { createPrismaServices } from './container';
+import { disconnectPrisma, getPrismaClient } from './db';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
-// Health check endpoint
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
+const app = createApp(createPrismaServices());
 
-// API routes
-app.use('/api', routes);
-
-// Error handling middleware
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Error:', err.message);
-  
-  if (err.message.includes('already registered')) {
-    res.status(409).json({ error: err.message });
-  } else if (err.message.includes('not found')) {
-    res.status(404).json({ error: err.message });
-  } else if (err.message.includes('Insufficient balance') || 
-             err.message.includes('not available')) {
-    res.status(400).json({ error: err.message });
-  } else {
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// 404 handler
-app.use((_req: Request, res: Response) => {
-  res.status(404).json({ error: 'Not found' });
-});
-
-// Start server
 const startServer = async (): Promise<void> => {
   try {
-    // Test database connection
-    await prisma.$connect();
+    await getPrismaClient().$connect();
     console.log('Database connected successfully');
 
     app.listen(port, () => {
@@ -58,13 +26,14 @@ const startServer = async (): Promise<void> => {
   }
 };
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await prisma.$disconnect();
+const shutdown = async (): Promise<void> => {
+  await disconnectPrisma();
   process.exit(0);
-});
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 startServer();
 
 export default app;
-

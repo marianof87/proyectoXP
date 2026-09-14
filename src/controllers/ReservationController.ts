@@ -1,64 +1,66 @@
-import { Request, Response, NextFunction } from 'express';
-import { ReservationService, BookRoomInput } from '../services/ReservationService';
+import { NextFunction, Request, Response } from 'express';
 
-const reservationService = new ReservationService();
+import { ValidationError } from '../models/errors';
+import { ReservationService } from '../services/ReservationService';
+import { parseId } from './UserController';
 
 export class ReservationController {
-  async bookRoom(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const input: BookRoomInput = req.body;
+  constructor(private readonly reservationService: ReservationService) {}
 
-      if (!input.userId || !input.roomId || !input.startDate || !input.endDate) {
-        res.status(400).json({
-          error: 'Missing required fields: userId, roomId, startDate, endDate',
-        });
-        return;
+  bookRoom = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const { userId, roomId, startDate, endDate } = req.body ?? {};
+
+      if (!userId || !roomId || !startDate || !endDate) {
+        throw new ValidationError(
+          'Missing required fields: userId, roomId, startDate, endDate'
+        );
       }
 
-      const reservation = await reservationService.bookRoom({
-        userId: input.userId,
-        roomId: input.roomId,
-        startDate: new Date(input.startDate),
-        endDate: new Date(input.endDate),
+      const reservation = await this.reservationService.bookRoom({
+        userId: Number(userId),
+        roomId: Number(roomId),
+        startDate: new Date(String(startDate)),
+        endDate: new Date(String(endDate)),
       });
 
       res.status(201).json(reservation);
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async getUserReservations(req: Request, res: Response, next: NextFunction): Promise<void> {
+  getUserReservations = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const { userId } = req.params;
-      const parsedUserId = parseInt(String(userId), 10);
-
-      if (isNaN(parsedUserId)) {
-        res.status(400).json({ error: 'Invalid user ID' });
-        return;
-      }
-
-      const reservations = await reservationService.getUserReservations(parsedUserId);
+      const reservations = await this.reservationService.getUserReservations(
+        parseId(req.params.userId, 'user ID')
+      );
       res.json(reservations);
     } catch (error) {
       next(error);
     }
-  }
+  };
 
-  async cancelReservation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  cancelReservation = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
-      const { id } = req.params;
-      const reservationId = parseInt(String(id), 10);
-
-      if (isNaN(reservationId)) {
-        res.status(400).json({ error: 'Invalid reservation ID' });
-        return;
-      }
-
-      const reservation = await reservationService.cancelReservation(reservationId);
+      const reservation = await this.reservationService.cancelReservation(
+        parseId(req.params.id, 'reservation ID')
+      );
       res.json(reservation);
     } catch (error) {
       next(error);
     }
-  }
+  };
 }

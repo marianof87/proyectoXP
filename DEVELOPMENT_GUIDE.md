@@ -175,7 +175,7 @@ Given('a user exists with email {string}', async (email: string) => {
 });
 
 When('a user registers with:', async (dataTable: DataTable) => {
-  const data = dataTable.rowsHashAsObject() as any;
+  const data = dataTable.rowsHash();
   
   try {
     const user = await userService.registerUser({

@@ -1,143 +1,82 @@
-name: CI/CD Pipeline
+# Pipeline de Integracion Continua (progXP.pdf seccion 3).
+#
+# Practica XP: ningun cambio se integra sin pasar linter, compilacion estricta,
+# pruebas unitarias y pruebas BDD. La suite corre sobre repositorios en
+# memoria, asi que no necesita levantar PostgreSQL.
+
+name: CI Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [main, master, develop]
 
 jobs:
-  quality:
+  build-and-test:
+    name: Lint, compilacion y pruebas
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: coworking_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: 22
+          cache: npm
 
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+      - name: Instalar dependencias
+        run: npm ci
 
-      - name: Setup environment
-        run: |
-          echo "DATABASE_URL=postgresql://test_user:test_password@localhost:5432/coworking_test" > .env
-          echo "PORT=3000" >> .env
-          echo "BCRYPT_ROUNDS=10" >> .env
-          echo "NODE_ENV=test" >> .env
+      # El cliente tipado de Prisma se genera a partir del schema; hace falta
+      # para que `tsc` resuelva los tipos de src/db.ts. No requiere base de datos.
+      - name: Generar cliente de Prisma
+        run: npm run prisma:generate
 
-      - name: Run Prisma migrations
-        run: npm run prisma:migrate -- --skip-generate
-
-      - name: Lint TypeScript code
+      - name: Verificacion de linters
         run: npm run lint
-        continue-on-error: false
 
-      - name: Compile TypeScript
-        run: npm run build
-        continue-on-error: false
+      - name: Compilacion de TypeScript (tipos estrictos)
+        run: npm run typecheck
 
-      - name: Run unit tests (Jest)
-        run: npm test -- --coverage --passWithNoTests
-        continue-on-error: false
+      - name: Pruebas unitarias (Jest) con cobertura
+        run: npm run test:coverage
 
-      - name: Run BDD tests (Cucumber)
+      - name: Pruebas BDD (Cucumber)
         run: npm run test:e2e
-        continue-on-error: false
 
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./coverage/lcov.info
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+      - name: Compilar a dist/
+        run: npm run build
 
-      - name: Archive test results
+      - name: Publicar informes de pruebas
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: reports/
+          name: test-reports
+          path: |
+            reports/
+            coverage/
+          if-no-files-found: ignore
 
   security:
+    name: Auditoria de dependencias
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: 22
+          cache: npm
 
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+      - name: Instalar dependencias
+        run: npm ci
 
-      - name: Check for vulnerabilities
-        run: npm audit --audit-level=moderate
+      - name: Buscar vulnerabilidades conocidas
+        run: npm audit --audit-level=high
         continue-on-error: true
-
-  build:
-    needs: [quality, security]
-    runs-on: ubuntu-latest
-    if: success()
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci --legacy-peer-deps
-
-      - name: Build application
-        run: npm run build
-
-      - name: Archive build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: build-artifacts
-          path: dist/
-
-  notify:
-    needs: [quality, security, build]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Pipeline Status
-        run: |
-          if [ "${{ needs.quality.result }}" == "success" ] && \
-             [ "${{ needs.security.result }}" == "success" ] && \
-             [ "${{ needs.build.result }}" == "success" ]; then
-            echo "✅ All checks passed!"
-            exit 0
-          else
-            echo "❌ Pipeline failed"
-            exit 1
-          fi

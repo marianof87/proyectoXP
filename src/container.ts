@@ -12,7 +12,7 @@ import { PrismaUnitOfWork } from './repositories/PrismaRepositories';
 import { getPrismaClient } from './db';
 import { ReservationService } from './services/ReservationService';
 import { RoomService } from './services/RoomService';
-import { UserService } from './services/UserService';
+import { SecurityLogger, UserService } from './services/UserService';
 
 export interface Services {
   userService: UserService;
@@ -20,8 +20,11 @@ export interface Services {
   reservationService: ReservationService;
 }
 
-export const createServices = (uow: IUnitOfWork): Services => ({
-  userService: new UserService(uow.users),
+export const createServices = (
+  uow: IUnitOfWork,
+  logger?: SecurityLogger
+): Services => ({
+  userService: new UserService(uow.users, logger),
   roomService: new RoomService(uow.rooms, uow.reservations),
   reservationService: new ReservationService(uow),
 });
@@ -36,5 +39,8 @@ export const createInMemoryServices = (): {
   uow: InMemoryUnitOfWork;
 } => {
   const uow = new InMemoryUnitOfWork();
-  return { services: createServices(uow), uow };
+  // Los avisos de login fallido se silencian: son el comportamiento esperado
+  // en los escenarios de HU-08, no un fallo de la suite.
+  const silentLogger: SecurityLogger = { warn: () => undefined };
+  return { services: createServices(uow, silentLogger), uow };
 };

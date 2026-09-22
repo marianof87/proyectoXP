@@ -18,6 +18,7 @@ import { UserService } from '../../src/services/UserService';
 describe('UserService', () => {
   let users: InMemoryUserRepository;
   let userService: UserService;
+  let logger: { warn: jest.Mock };
 
   const validInput = {
     email: 'test@example.com',
@@ -27,7 +28,8 @@ describe('UserService', () => {
 
   beforeEach(() => {
     users = new InMemoryUserRepository();
-    userService = new UserService(users);
+    logger = { warn: jest.fn() };
+    userService = new UserService(users, logger);
   });
 
   describe('registerUser', () => {
@@ -182,6 +184,10 @@ describe('UserService', () => {
       expect(attempts).toHaveLength(2);
       expect(attempts[0].reason).toBe('WRONG_PASSWORD');
       expect(attempts[1].reason).toBe('UNKNOWN_EMAIL');
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenLastCalledWith(
+        expect.stringContaining('[security] Failed login attempt for "nadie@example.com" (UNKNOWN_EMAIL)')
+      );
     });
 
     it('no registra nada cuando el login es correcto', async () => {
@@ -193,6 +199,7 @@ describe('UserService', () => {
       });
 
       expect(userService.getFailedLoginAttempts()).toHaveLength(0);
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     it('filtra los intentos fallidos por email', async () => {

@@ -55,6 +55,10 @@ model Reservation {
   room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
   
   @@unique([roomId, startDate, endDate])
+  // Índices creados en 001_init (HU-07): consultas por usuario, sala y estado.
+  @@index([userId])
+  @@index([roomId])
+  @@index([status])
   @@map("reservations")
 }
 

@@ -34,6 +34,14 @@ export interface FailedLoginAttempt {
   reason: 'UNKNOWN_EMAIL' | 'WRONG_PASSWORD';
 }
 
+/**
+ * Destino de los avisos de seguridad. Por defecto es la consola; las pruebas
+ * inyectan uno silencioso para no ensuciar la salida y poder comprobarlo.
+ */
+export interface SecurityLogger {
+  warn(message: string): void;
+}
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -45,7 +53,10 @@ export class UserService {
    */
   private readonly failedLoginAttempts: FailedLoginAttempt[] = [];
 
-  constructor(private readonly users: IUserRepository) {}
+  constructor(
+    private readonly users: IUserRepository,
+    private readonly logger: SecurityLogger = console
+  ) {}
 
   async registerUser(input: RegisterUserInput): Promise<UserResponse> {
     this.validateRegistration(input);
@@ -127,7 +138,7 @@ export class UserService {
   ): void {
     const attempt: FailedLoginAttempt = { email, timestamp: new Date(), reason };
     this.failedLoginAttempts.push(attempt);
-    console.warn(
+    this.logger.warn(
       `[security] Failed login attempt for "${email}" (${reason}) at ${attempt.timestamp.toISOString()}`
     );
   }

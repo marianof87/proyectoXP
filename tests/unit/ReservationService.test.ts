@@ -1,4 +1,4 @@
-/** Pruebas unitarias de ReservationService (HU-03, HU-04, HU-06). */
+/** Pruebas unitarias de ReservationService (HU-03, HU-04, HU-06, HU-11). */
 
 import { InMemoryUnitOfWork } from '../../src/repositories/InMemoryRepositories';
 import {
@@ -127,6 +127,60 @@ describe('ReservationService', () => {
         })
       ).rejects.toThrow('Invalid date format');
     });
+
+    describe('idempotencia (HU-11, Actividad B)', () => {
+      it('una segunda petición con la misma clave devuelve la reserva original', async () => {
+        const primera = await service.bookRoom(
+          { userId, roomId, startDate: at(9), endDate: at(11) },
+          'clave-123'
+        );
+
+        const segunda = await service.bookRoom(
+          { userId, roomId, startDate: at(9), endDate: at(11) },
+          'clave-123'
+        );
+
+        expect(segunda).toEqual(primera);
+      });
+
+      it('no descuenta el balance dos veces para la misma clave', async () => {
+        await service.bookRoom(
+          { userId, roomId, startDate: at(9), endDate: at(11) },
+          'clave-456'
+        );
+        await service.bookRoom(
+          { userId, roomId, startDate: at(9), endDate: at(11) },
+          'clave-456'
+        );
+
+        expect((await uow.users.findById(userId))?.balance).toBe(800);
+      });
+
+      it('una clave distinta sí crea una segunda reserva', async () => {
+        await service.bookRoom(
+          { userId, roomId, startDate: at(9), endDate: at(11) },
+          'clave-a'
+        );
+        const segunda = await service.bookRoom(
+          { userId, roomId, startDate: at(12), endDate: at(14) },
+          'clave-b'
+        );
+
+        expect(segunda.startDate).toEqual(at(12));
+        await expect(
+          service.getUserReservations(userId)
+        ).resolves.toHaveLength(2);
+      });
+
+      it('sin clave, cada llamada crea una reserva nueva (comportamiento previo)', async () => {
+        await book(9, 11);
+        await book(12, 14);
+
+        await expect(
+          service.getUserReservations(userId)
+        ).resolves.toHaveLength(2);
+      });
+    });
   });
 
   describe('getUserReservations', () => {
@@ -190,6 +244,60 @@ describe('ReservationService', () => {
       await expect(lateService.cancelReservation(reservation.id)).rejects.toThrow(
         'Cannot cancel a reservation already started'
       );
+    });
+  });
+
+  describe('advanceStatus (HU-11, Actividad A: máquina de estados)', () => {
+    it('avanza de CONFIRMED a IN_PROGRESS', async () => {
+      const reservation = await book(9, 11);
+
+      await expect(
+        service.advanceStatus(reservation.id, 'IN_PROGRESS')
+      ).resolves.toMatchObject({ status: 'IN_PROGRESS' });
+    });
+
+    it('avanza de IN_PROGRESS a COMPLETED', async () => {
+      const reservation = await book(9, 11);
+      await service.advanceStatus(reservation.id, 'IN_PROGRESS');
+
+      await expect(
+        service.advanceStatus(reservation.id, 'COMPLETED')
+      ).resolves.toMatchObject({ status: 'COMPLETED' });
+    });
+
+    it('rechaza saltarse un paso: CONFIRMED -> COMPLETED', async () => {
+      const reservation = await book(9, 11);
+
+      await expect(
+        service.advanceStatus(reservation.id, 'COMPLETED')
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it('rechaza avanzar una reserva ya completada', async () => {
+      const reservation = await book(9, 11);
+      await service.advanceStatus(reservation.id, 'IN_PROGRESS');
+      await service.advanceStatus(reservation.id, 'COMPLETED');
+
+      await expect(
+        service.advanceStatus(reservation.id, 'IN_PROGRESS')
+      ).rejects.toThrow(
+        'Cannot transition reservation from COMPLETED to IN_PROGRESS'
+      );
+    });
+
+    it('rechaza avanzar una reserva cancelada', async () => {
+      const reservation = await book(9, 11);
+      await service.cancelReservation(reservation.id);
+
+      await expect(
+        service.advanceStatus(reservation.id, 'IN_PROGRESS')
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it('falla si la reserva no existe', async () => {
+      await expect(
+        service.advanceStatus(999, 'IN_PROGRESS')
+      ).rejects.toThrow(NotFoundError);
     });
   });
 });

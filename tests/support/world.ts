@@ -58,6 +58,8 @@ export class MundoCoworking extends World {
   ultimoPerfil?: UserResponse;
   /** Nombre del usuario que ejecutó la última acción autenticada (HU-09). */
   ultimoActor?: string;
+  /** Primera respuesta al reservar con una clave de idempotencia (HU-11). */
+  primeraReservaIdempotente?: ReservationResponse;
 
   private servidor?: Server;
 

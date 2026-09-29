@@ -116,6 +116,17 @@
 - Un error inesperado (500) se registra con el request completo, pero contraseñas, tokens y cabeceras de autorización aparecen censurados en el log, nunca en texto plano
 - La inyección SQL/NoSQL no aplica: todo el acceso a datos pasa por Prisma, que parametriza las consultas
 
+### 11. Gestión de Sesiones y Estados
+**Como** sistema de reservas de coworking  
+**Quiero** una máquina de estados explícita sobre las reservas, idempotencia al crearlas y poder revocar una sesión  
+**Para** que el avance de una operación comercial sea predecible, no se duplique por reintentos y el logout sea real
+
+**Criterios de Aceptación:**
+- Una reserva solo puede avanzar CONFIRMED → IN_PROGRESS → COMPLETED; cualquier otra transición se rechaza con un error de negocio (409)
+- Avanzar el estado de una reserva es una operación de ADMIN
+- Repetir `POST /api/reservations` con la misma cabecera `X-Idempotency-Key` devuelve la reserva creada la primera vez, sin cobrar ni reservar dos veces
+- `POST /api/users/logout` revoca el token actual; una petición posterior con ese mismo token es rechazada con 401 aunque la firma siga siendo válida
+
 ---
 
 ## Definiciones de Hecho (Definition of Done)
@@ -148,6 +159,7 @@ Una historia se considera completada cuando:
 | 🔴 Alta | Seguridad de Datos | 8 puntos |
 | 🔴 Alta | Autenticación y Autorización con JWT | 8 puntos |
 | 🟡 Media | Saneamiento, Validación de Entradas y Logs Seguros | 5 puntos |
+| 🟡 Media | Gestión de Sesiones y Estados | 8 puntos |
 
 ---
 
@@ -160,8 +172,9 @@ Usuarios
 └── Ver Perfil
 
 Reservas
-├── Crear Reserva
+├── Crear Reserva (idempotente vía X-Idempotency-Key)
 ├── Ver Mis Reservas
+├── Avanzar Estado (CONFIRMED → IN_PROGRESS → COMPLETED)
 └── Cancelar Reserva
 
 Administración
@@ -174,5 +187,6 @@ Seguridad
 ├── Validación y Saneamiento de Inputs (Zod)
 ├── Logging de Eventos y Errores (con redacción de datos sensibles)
 ├── Autenticación con JWT
-└── Autorización (por rol y por propiedad del recurso)
+├── Autorización (por rol y por propiedad del recurso)
+└── Revocación de Sesión (logout)
 ```

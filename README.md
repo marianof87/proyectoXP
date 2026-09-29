@@ -86,9 +86,11 @@ prisma/schema.prisma          # Esquema de datos
 | `GET` | `/api/rooms` | Listar salas | Público |
 | `GET` | `/api/rooms/:id` | Consultar sala | Público |
 | `POST` | `/api/rooms/:id/check-availability` | Comprobar disponibilidad | Público |
-| `POST` | `/api/reservations` | Crear reserva | Autenticado |
+| `POST` | `/api/reservations` | Crear reserva (acepta `X-Idempotency-Key`) | Autenticado |
 | `GET` | `/api/users/:userId/reservations` | Reservas de un usuario | Dueño o ADMIN |
+| `PATCH` | `/api/reservations/:id/status` | Avanzar estado (`IN_PROGRESS`/`COMPLETED`) | ADMIN |
 | `DELETE` | `/api/reservations/:id` | Cancelar reserva | Autenticado |
+| `POST` | `/api/users/logout` | Revocar el token actual | Autenticado |
 
 ### Autenticación y autorización (HU-09)
 
@@ -162,6 +164,38 @@ antes de escribir el log (`redact`). Antes de este cambio, `errorHandler`
 volcaba `req.body`/`req.headers` con `console.error`, texto plano incluido.
 Verificado en `tests/unit/logger.test.ts`.
 
+### Estados, idempotencia y logout (HU-11, Unidad 5)
+
+Una reserva nace `CONFIRMED` (se paga al reservar) y solo puede avanzar en
+un sentido: `CONFIRMED` → `IN_PROGRESS` → `COMPLETED`. Cualquier otra
+transición (saltarse un paso, retroceder, avanzar una ya cancelada) se
+rechaza con 409. Cancelar sigue siendo el camino de HU-06, sin cambios.
+
+```bash
+# Salta un paso -> 409
+curl -X PATCH http://localhost:3000/api/reservations/1/status \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_ADMIN" \
+  -d '{"status":"COMPLETED"}'
+```
+
+`POST /api/reservations` acepta una cabecera `X-Idempotency-Key` opcional:
+repetir la misma clave devuelve la reserva creada la primera vez (mismo id,
+sin cobrar ni reservar de nuevo), en vez de procesar la petición otra vez.
+
+```bash
+curl -X POST http://localhost:3000/api/reservations \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -H "X-Idempotency-Key: reserva-del-cliente-123" \
+  -d '{"userId":1,"roomId":1,"startDate":"...","endDate":"..."}'
+# Repetir la misma petición con la misma clave -> mismo id, un solo cobro
+```
+
+`POST /api/users/logout` revoca el token actual: un JWT firmado no se puede
+"borrar", así que se guarda su `jti` en una lista negra
+(`RevokedToken`/`revoked_tokens`) hasta su expiración natural; `authenticate`
+la consulta en cada petición. Tras el logout, ese mismo token responde 401
+aunque su firma siga siendo válida.
+
 ---
 
 ## Justificación de las decisiones XP
@@ -184,6 +218,18 @@ escenario o un test unitario **antes** de implementarlas.
 - JWT (HU-09) se añadió cuando la historia lo pidió, no antes: `TokenService`
   solo firma/verifica el payload que le pasan, sin sesiones ni refresh tokens
   que nadie ha pedido todavía.
+- Sin cookies de sesión (HttpOnly/Secure/SameSite): el sistema ya es
+  stateless con JWT en el header `Authorization`, así que añadirlas
+  duplicaría un mecanismo que nadie usa.
+- Sin bloqueo optimista con número de versión (HU-11): el solapamiento de
+  reservas ya se comprueba dentro de una transacción (`findOverlapping` +
+  `create` en el mismo `$transaction`), que es la garantía que pide la
+  historia; una columna de versión no aporta nada que eso no cubra ya.
+- La idempotencia (HU-11) es "consultar, y si no existe, crear y guardar la
+  clave" (sin manejo de conflicto de escritura concurrente): ninguna
+  historia pide todavía servir dos peticiones simultáneas con la misma
+  clave, y la restricción `@id` en `idempotency_keys` ya deja la puerta
+  abierta a añadirlo el día que haga falta.
 
 ### Refactorización continua
 
@@ -220,11 +266,11 @@ compilación estricta → pruebas unitarias con umbral de cobertura → pruebas 
 ## Estado de las pruebas
 
 ```
-Cucumber:  41 escenarios · 218 pasos · 41 passed
-Jest:      7 suites ·  66 tests  ·  66 passed · 91,7 % statements
+Cucumber:  49 escenarios · 278 pasos · 49 passed
+Jest:      8 suites ·  81 tests  ·  81 passed · 91,8 % statements
 ```
 
-Hay **una feature por cada historia del backlog** (6 funcionales + 4 técnicas),
+Hay **una feature por cada historia del backlog** (6 funcionales + 5 técnicas),
 cada una con su camino feliz y al menos un caso de error o límite:
 
 | Feature | Historia |
@@ -239,6 +285,7 @@ cada una con su camino feliz y al menos un caso de error o límite:
 | `08-seguridad-datos.feature` | HU-08 Seguridad (técnica) |
 | `09-autenticacion-jwt.feature` | HU-09 Autenticación y autorización JWT (técnica) |
 | `10-sanitizacion-validacion.feature` | HU-10 Saneamiento y validación de entradas (técnica) |
+| `11-sesiones-estados.feature` | HU-11 Gestión de sesiones y estados (técnica) |
 
 Los escenarios están redactados en español, siguiendo el ejemplo del propio
 `progXP.pdf` (palabras clave Gherkin en inglés, texto de la historia en

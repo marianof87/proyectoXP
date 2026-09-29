@@ -12,6 +12,7 @@ import {
 import { validateRequest } from '../middleware/validateRequest';
 import {
   addBalanceSchema,
+  advanceReservationStatusSchema,
   bookRoomSchema,
   checkAvailabilitySchema,
   createRoomSchema,
@@ -23,11 +24,15 @@ import {
 export const createRouter = (services: Services): Router => {
   const router: Router = express.Router();
 
-  const users = new UserController(services.userService, services.tokenService);
+  const users = new UserController(
+    services.userService,
+    services.tokenService,
+    services.sessionService
+  );
   const rooms = new RoomController(services.roomService);
   const reservations = new ReservationController(services.reservationService);
 
-  const auth = authenticate(services.tokenService);
+  const auth = authenticate(services.tokenService, services.sessionService);
 
   // Usuarios - públicas
   router.post('/users/register', validateRequest(registerSchema), users.register);
@@ -37,6 +42,8 @@ export const createRouter = (services: Services): Router => {
   // Express resuelve las rutas en orden de registro, así que si "/:id" fuera
   // primero capturaría "/users/me" con id = "me".
   router.get('/users/me', auth, users.me);
+  // HU-11 (Actividad C): revoca el token actual (logout).
+  router.post('/users/logout', auth, users.logout);
   router.get('/users/:id', users.getUserById);
   router.post(
     '/users/:id/balance',
@@ -76,6 +83,14 @@ export const createRouter = (services: Services): Router => {
     reservations.getUserReservations
   );
   router.delete('/reservations/:id', auth, reservations.cancelReservation);
+  // HU-11 (Actividad A): avanzar el estado es una operación de staff (ADMIN).
+  router.patch(
+    '/reservations/:id/status',
+    auth,
+    requireRole(['ADMIN']),
+    validateRequest(advanceReservationStatusSchema),
+    reservations.advanceStatus
+  );
 
   return router;
 };

@@ -60,3 +60,14 @@ export const bookRoomSchema = z
     endDate: z.string().min(1),
   })
   .strict();
+
+/**
+ * HU-11: solo los dos estados a los que esta ruta puede avanzar. CANCELLED
+ * sigue sin pasar por aquí (ver ReservationService.ts): cancelar es el
+ * camino ya probado por HU-06, con su propio reembolso.
+ */
+export const advanceReservationStatusSchema = z
+  .object({
+    status: z.enum(['IN_PROGRESS', 'COMPLETED']),
+  })
+  .strict();

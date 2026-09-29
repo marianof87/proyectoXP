@@ -1,6 +1,6 @@
-/** HU-03 Reserva de salas, HU-04 Visualizacion, HU-06 Cancelacion. */
+/** HU-03 Reserva de salas, HU-04 Visualizacion, HU-06 Cancelacion, HU-11 Estados/Idempotencia. */
 
-import { ReservationResponse, toReservationResponse } from '../models';
+import { ReservationResponse, ReservationStatus, toReservationResponse } from '../models';
 import {
   ConflictError,
   NotFoundError,
@@ -17,6 +17,18 @@ export interface BookRoomInput {
 
 const MS_PER_HOUR = 1000 * 60 * 60;
 
+/**
+ * HU-11 (Actividad A): tabla de transiciones para `advanceStatus`. No incluye
+ * CANCELLED a propósito: cancelar sigue siendo un camino aparte
+ * (`cancelReservation`, con su propio reembolso y regla de "no iniciada
+ * todavía"), ya cubierto y probado por HU-06. Esta tabla solo formaliza el
+ * avance hacia adelante: confirmada -> en curso -> completada.
+ */
+const ALLOWED_ADVANCES: Partial<Record<ReservationStatus, ReservationStatus[]>> = {
+  CONFIRMED: ['IN_PROGRESS'],
+  IN_PROGRESS: ['COMPLETED'],
+};
+
 export class ReservationService {
   constructor(
     private readonly uow: IUnitOfWork,
@@ -24,7 +36,28 @@ export class ReservationService {
     private readonly now: () => Date = () => new Date()
   ) {}
 
-  async bookRoom(input: BookRoomInput): Promise<ReservationResponse> {
+  /**
+   * `idempotencyKey` es opcional (HU-11, Actividad B): si se repite una
+   * petición con la misma clave, se devuelve la reserva creada la primera
+   * vez en lugar de procesar el pago de nuevo. Sin clave, se comporta igual
+   * que antes de HU-11.
+   */
+  async bookRoom(
+    input: BookRoomInput,
+    idempotencyKey?: string
+  ): Promise<ReservationResponse> {
+    if (idempotencyKey) {
+      const existing = await this.uow.idempotencyKeys.findByKey(idempotencyKey);
+      if (existing) {
+        const reservation = await this.uow.reservations.findById(
+          existing.reservationId
+        );
+        if (reservation) {
+          return toReservationResponse(reservation);
+        }
+      }
+    }
+
     this.validateDateRange(input.startDate, input.endDate);
 
     const room = await this.uow.rooms.findById(input.roomId);
@@ -54,7 +87,8 @@ export class ReservationService {
       throw new ValidationError('Insufficient balance');
     }
 
-    // Crear la reserva y descontar el saldo deben ocurrir juntos o no ocurrir.
+    // Crear la reserva, descontar el saldo y guardar la clave de idempotencia
+    // deben ocurrir juntos o no ocurrir.
     const reservation = await this.uow.transaction(async (tx) => {
       const created = await tx.reservations.create({
         userId: input.userId,
@@ -67,10 +101,42 @@ export class ReservationService {
 
       await tx.users.incrementBalance(input.userId, -totalCost);
 
+      if (idempotencyKey) {
+        await tx.idempotencyKeys.save(idempotencyKey, created.id);
+      }
+
       return created;
     });
 
     return toReservationResponse(reservation);
+  }
+
+  /**
+   * HU-11 (Actividad A): avanza la reserva hacia adelante (CONFIRMED ->
+   * IN_PROGRESS -> COMPLETED), rechazando cualquier otra transición con un
+   * error de negocio estructurado (ConflictError, 409).
+   */
+  async advanceStatus(
+    reservationId: number,
+    targetStatus: 'IN_PROGRESS' | 'COMPLETED'
+  ): Promise<ReservationResponse> {
+    const reservation = await this.uow.reservations.findById(reservationId);
+    if (!reservation) {
+      throw new NotFoundError('Reservation not found');
+    }
+
+    const allowedTargets = ALLOWED_ADVANCES[reservation.status] ?? [];
+    if (!allowedTargets.includes(targetStatus)) {
+      throw new ConflictError(
+        `Cannot transition reservation from ${reservation.status} to ${targetStatus}`
+      );
+    }
+
+    const updated = await this.uow.reservations.updateStatus(
+      reservationId,
+      targetStatus
+    );
+    return toReservationResponse(updated);
   }
 
   async getUserReservations(userId: number): Promise<ReservationResponse[]> {

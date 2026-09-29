@@ -70,13 +70,35 @@ export interface IReservationRepository {
 }
 
 /**
- * Agrupa los tres repositorios y permite ejecutar una operacion que toca
- * varios de ellos de forma atómica (reservar = crear reserva + descontar
- * saldo). En Prisma se traduce a $transaction; en memoria es secuencial.
+ * HU-11 (Unidad 5, Actividad B): una X-Idempotency-Key ya vista devuelve la
+ * reserva original en vez de crear una nueva.
+ */
+export interface IIdempotencyKeyRepository {
+  findByKey(key: string): Promise<{ reservationId: number } | null>;
+  save(key: string, reservationId: number): Promise<void>;
+  deleteAll(): Promise<void>;
+}
+
+/**
+ * HU-11 (Unidad 5, Actividad C): lista negra de tokens revocados por logout.
+ * Se indexa por `jti` (identificador del token), nunca por el JWT completo.
+ */
+export interface IRevokedTokenRepository {
+  isRevoked(jti: string): Promise<boolean>;
+  revoke(jti: string, expiresAt: Date): Promise<void>;
+  deleteAll(): Promise<void>;
+}
+
+/**
+ * Agrupa los repositorios y permite ejecutar una operacion que toca varios
+ * de ellos de forma atómica (reservar = crear reserva + descontar saldo).
+ * En Prisma se traduce a $transaction; en memoria es secuencial.
  */
 export interface IUnitOfWork {
   readonly users: IUserRepository;
   readonly rooms: IRoomRepository;
   readonly reservations: IReservationRepository;
+  readonly idempotencyKeys: IIdempotencyKeyRepository;
+  readonly revokedTokens: IRevokedTokenRepository;
   transaction<T>(work: (uow: IUnitOfWork) => Promise<T>): Promise<T>;
 }

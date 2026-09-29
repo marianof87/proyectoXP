@@ -50,16 +50,46 @@ model Reservation {
   totalCost Float
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  
+  idempotencyKey IdempotencyKey?
+
   @@unique([roomId, startDate, endDate])
   // Índices creados en 001_init (HU-07): consultas por usuario, sala y estado.
   @@index([userId])
   @@index([roomId])
   @@index([status])
   @@map("reservations")
+}
+
+/**
+ * HU-11 (Unidad 5, Actividad B): una misma X-Idempotency-Key nunca debe
+ * generar dos reservas. `key` es la clave que envía el cliente; `reservationId`
+ * apunta a la reserva que se creó la primera vez que se vio esa clave.
+ */
+model IdempotencyKey {
+  key           String   @id
+  reservationId Int      @unique
+  createdAt     DateTime @default(now())
+
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@map("idempotency_keys")
+}
+
+/**
+ * HU-11 (Unidad 5, Actividad C): lista negra de tokens revocados por logout.
+ * Se guarda el jti (no el token completo) y su expiración natural, para
+ * poder purgar filas vencidas sin tener que decodificar el JWT de nuevo.
+ */
+model RevokedToken {
+  jti       String   @id
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("revoked_tokens")
 }
 
 enum Role {
@@ -70,6 +100,7 @@ enum Role {
 enum ReservationStatus {
   PENDING
   CONFIRMED
+  IN_PROGRESS
   CANCELLED
   COMPLETED
 }

@@ -10,6 +10,7 @@ export type Role = 'USER' | 'ADMIN';
 export type ReservationStatus =
   | 'PENDING'
   | 'CONFIRMED'
+  | 'IN_PROGRESS'
   | 'CANCELLED'
   | 'COMPLETED';
 

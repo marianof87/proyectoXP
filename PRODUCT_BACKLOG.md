@@ -105,6 +105,17 @@
 - La creación de salas exige rol ADMIN y devuelve 403 si el usuario autenticado no lo tiene
 - Consultar o modificar el balance/las reservas de otro usuario exige rol ADMIN; el propio dueño del recurso siempre puede acceder
 
+### 10. Gestión de Sesiones y Estados
+**Como** sistema de reservas de coworking  
+**Quiero** una máquina de estados explícita sobre las reservas, idempotencia al crearlas y poder revocar una sesión  
+**Para** que el avance de una operación comercial sea predecible, no se duplique por reintentos y el logout sea real
+
+**Criterios de Aceptación:**
+- Una reserva solo puede avanzar CONFIRMED → IN_PROGRESS → COMPLETED; cualquier otra transición se rechaza con un error de negocio (409)
+- Avanzar el estado de una reserva es una operación de ADMIN
+- Repetir `POST /api/reservations` con la misma cabecera `X-Idempotency-Key` devuelve la reserva creada la primera vez, sin cobrar ni reservar dos veces
+- `POST /api/users/logout` revoca el token actual; una petición posterior con ese mismo token es rechazada con 401 aunque la firma siga siendo válida
+
 ---
 
 ## Definiciones de Hecho (Definition of Done)
@@ -136,6 +147,7 @@ Una historia se considera completada cuando:
 | 🔴 Alta | Rendimiento de API | 8 puntos |
 | 🔴 Alta | Seguridad de Datos | 8 puntos |
 | 🔴 Alta | Autenticación y Autorización con JWT | 8 puntos |
+| 🟡 Media | Gestión de Sesiones y Estados | 8 puntos |
 
 ---
 
@@ -148,8 +160,9 @@ Usuarios
 └── Ver Perfil
 
 Reservas
-├── Crear Reserva
+├── Crear Reserva (idempotente vía X-Idempotency-Key)
 ├── Ver Mis Reservas
+├── Avanzar Estado (CONFIRMED → IN_PROGRESS → COMPLETED)
 └── Cancelar Reserva
 
 Administración
@@ -162,5 +175,6 @@ Seguridad
 ├── Validación de Inputs
 ├── Logging de Eventos
 ├── Autenticación con JWT
-└── Autorización (por rol y por propiedad del recurso)
+├── Autorización (por rol y por propiedad del recurso)
+└── Revocación de Sesión (logout)
 ```

@@ -1,13 +1,15 @@
 import { NextFunction, Request, Response } from 'express';
 
 import { UnauthorizedError, ValidationError } from '../models/errors';
+import { SessionService } from '../services/SessionService';
 import { TokenService } from '../services/TokenService';
 import { UserService } from '../services/UserService';
 
 export class UserController {
   constructor(
     private readonly userService: UserService,
-    private readonly tokenService: TokenService
+    private readonly tokenService: TokenService,
+    private readonly sessionService: SessionService
   ) {}
 
   register = async (
@@ -81,6 +83,33 @@ export class UserController {
       }
 
       res.json(user);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * HU-11 (Actividad C): revoca el token actual. Un JWT firmado no se puede
+   * "borrar", así que se guarda su jti en la lista negra hasta que expire
+   * solo (ver SessionService); a partir de ahí, authenticate lo rechaza
+   * aunque la firma siga siendo válida.
+   */
+  logout = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        throw new UnauthorizedError('No token provided');
+      }
+
+      await this.sessionService.revoke(
+        req.user.jti,
+        new Date(req.user.exp * 1000)
+      );
+
+      res.status(204).send();
     } catch (error) {
       next(error);
     }

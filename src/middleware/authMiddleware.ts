@@ -1,5 +1,5 @@
 /**
- * HU-09: Middlewares de autenticación y autorización (src/middleware/).
+ * HU-09/HU-11: Middlewares de autenticación y autorización (src/middleware/).
  *
  * Adaptan el patrón verificarToken/requerirRol del material de la unidad al
  * resto del sistema: reciben el TokenService por parámetro (igual que los
@@ -12,21 +12,29 @@ import { NextFunction, Request, Response } from 'express';
 import { Role } from '../models';
 import { ForbiddenError, UnauthorizedError } from '../models/errors';
 import { parseId } from '../controllers/UserController';
-import { TokenPayload, TokenService } from '../services/TokenService';
+import { SessionService } from '../services/SessionService';
+import { TokenService, VerifiedTokenPayload } from '../services/TokenService';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       /** Presente solo tras pasar por `authenticate`. */
-      user?: TokenPayload;
+      user?: VerifiedTokenPayload;
     }
   }
 }
 
-/** Exige un Bearer token válido y expone su payload como `req.user`. */
-export const authenticate = (tokenService: TokenService) => {
-  return (req: Request, _res: Response, next: NextFunction): void => {
+/**
+ * Exige un Bearer token válido, no revocado, y expone su payload en
+ * `req.user`. La comprobación de revocación (HU-11) es lo único que impide
+ * que, tras un logout, el mismo JWT siga sirviendo hasta que expire solo.
+ */
+export const authenticate = (
+  tokenService: TokenService,
+  sessionService: SessionService
+) => {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     const header = req.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
 
@@ -36,7 +44,14 @@ export const authenticate = (tokenService: TokenService) => {
     }
 
     try {
-      req.user = tokenService.verifyToken(token);
+      const payload = tokenService.verifyToken(token);
+
+      if (await sessionService.isRevoked(payload.jti)) {
+        next(new UnauthorizedError('Token has been revoked'));
+        return;
+      }
+
+      req.user = payload;
       next();
     } catch (error) {
       next(error);

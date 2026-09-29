@@ -105,7 +105,18 @@
 - La creación de salas exige rol ADMIN y devuelve 403 si el usuario autenticado no lo tiene
 - Consultar o modificar el balance/las reservas de otro usuario exige rol ADMIN; el propio dueño del recurso siempre puede acceder
 
-### 10. Gestión de Sesiones y Estados
+### 10. Saneamiento, Validación de Entradas y Logs Seguros
+**Como** sistema de reservas de coworking  
+**Quiero** validar y sanear el cuerpo de cada petición, y censurar los datos sensibles en los logs  
+**Para** rechazar entradas mal formadas antes de la lógica de negocio y no filtrar contraseñas ni tokens
+
+**Criterios de Aceptación:**
+- Cada endpoint que escribe datos valida su body contra un esquema estricto: rechaza campos no declarados y tipos incorrectos con 400
+- Los campos de texto se sanean (trim) antes de guardarse
+- Un error inesperado (500) se registra con el request completo, pero contraseñas, tokens y cabeceras de autorización aparecen censurados en el log, nunca en texto plano
+- La inyección SQL/NoSQL no aplica: todo el acceso a datos pasa por Prisma, que parametriza las consultas
+
+### 11. Gestión de Sesiones y Estados
 **Como** sistema de reservas de coworking  
 **Quiero** una máquina de estados explícita sobre las reservas, idempotencia al crearlas y poder revocar una sesión  
 **Para** que el avance de una operación comercial sea predecible, no se duplique por reintentos y el logout sea real
@@ -147,6 +158,7 @@ Una historia se considera completada cuando:
 | 🔴 Alta | Rendimiento de API | 8 puntos |
 | 🔴 Alta | Seguridad de Datos | 8 puntos |
 | 🔴 Alta | Autenticación y Autorización con JWT | 8 puntos |
+| 🟡 Media | Saneamiento, Validación de Entradas y Logs Seguros | 5 puntos |
 | 🟡 Media | Gestión de Sesiones y Estados | 8 puntos |
 
 ---
@@ -172,8 +184,8 @@ Administración
 
 Seguridad
 ├── Hashing de Contraseñas
-├── Validación de Inputs
-├── Logging de Eventos
+├── Validación y Saneamiento de Inputs (Zod)
+├── Logging de Eventos y Errores (con redacción de datos sensibles)
 ├── Autenticación con JWT
 ├── Autorización (por rol y por propiedad del recurso)
 └── Revocación de Sesión (logout)

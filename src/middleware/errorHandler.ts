@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 
+import { logger } from '../logger';
 import { DomainError } from '../models/errors';
 
 /**
@@ -13,7 +14,7 @@ import { DomainError } from '../models/errors';
  */
 export const errorHandler = (
   error: Error,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void => {
@@ -22,7 +23,20 @@ export const errorHandler = (
     return;
   }
 
-  console.error('Unexpected error:', error);
+  // HU-10: se registra la petición completa para poder depurar el fallo,
+  // pero `logger` censura authorization/password/token (ver src/logger.ts).
+  logger.error(
+    {
+      req: {
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body: req.body,
+      },
+      err: error,
+    },
+    'Unexpected error'
+  );
   res.status(500).json({ error: 'Internal server error' });
 };
 

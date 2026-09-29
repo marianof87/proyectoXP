@@ -1,12 +1,12 @@
 import { NextFunction, Request, Response } from 'express';
+import { z } from 'zod';
 
-import { ReservationStatus } from '../models';
-import { ValidationError } from '../models/errors';
 import { ReservationService } from '../services/ReservationService';
+import {
+  advanceReservationStatusSchema,
+  bookRoomSchema,
+} from '../validation/schemas';
 import { parseId } from './UserController';
-
-/** HU-11 (Actividad B): estados a los que se puede avanzar por esta ruta. */
-const ADVANCEABLE_STATUSES: ReservationStatus[] = ['IN_PROGRESS', 'COMPLETED'];
 
 export class ReservationController {
   constructor(private readonly reservationService: ReservationService) {}
@@ -17,13 +17,9 @@ export class ReservationController {
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { userId, roomId, startDate, endDate } = req.body ?? {};
-
-      if (!userId || !roomId || !startDate || !endDate) {
-        throw new ValidationError(
-          'Missing required fields: userId, roomId, startDate, endDate'
-        );
-      }
+      const { userId, roomId, startDate, endDate } = req.body as z.infer<
+        typeof bookRoomSchema
+      >;
 
       // HU-11 (Actividad B): opcional, para no romper a los clientes que
       // todavía no la envían (ver README).
@@ -33,10 +29,10 @@ export class ReservationController {
 
       const reservation = await this.reservationService.bookRoom(
         {
-          userId: Number(userId),
-          roomId: Number(roomId),
-          startDate: new Date(String(startDate)),
-          endDate: new Date(String(endDate)),
+          userId,
+          roomId,
+          startDate: new Date(startDate),
+          endDate: new Date(endDate),
         },
         idempotencyKey
       );
@@ -55,17 +51,13 @@ export class ReservationController {
   ): Promise<void> => {
     try {
       const reservationId = parseId(req.params.id, 'reservation ID');
-      const { status } = req.body ?? {};
-
-      if (!ADVANCEABLE_STATUSES.includes(status)) {
-        throw new ValidationError(
-          `status must be one of: ${ADVANCEABLE_STATUSES.join(', ')}`
-        );
-      }
+      const { status } = req.body as z.infer<
+        typeof advanceReservationStatusSchema
+      >;
 
       const reservation = await this.reservationService.advanceStatus(
         reservationId,
-        status as 'IN_PROGRESS' | 'COMPLETED'
+        status
       );
 
       res.json(reservation);

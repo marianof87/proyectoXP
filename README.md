@@ -60,7 +60,9 @@ src/
   services/                   # Lógica de negocio (sin Express ni Prisma)
   repositories/               # Acceso a datos: interfaces + Prisma + en memoria
   models/                     # Tipos de dominio y errores
-  middleware/                 # Manejo de errores
+  middleware/                 # Auth, validación de entrada, manejo de errores
+  validation/                 # Esquemas Zod del body de cada ruta
+  logger.ts                   # Logger (Pino) con redacción de datos sensibles
   routes/                     # Definición de endpoints
   container.ts                # Raíz de composición (inyección de dependencias)
   app.ts                      # Construcción de la app Express
@@ -129,6 +131,38 @@ Como el registro público siempre asigna rol `USER`, un usuario `ADMIN` de
 prueba se crea directamente en la base de datos (o en el repositorio en
 memoria, como hace `MundoCoworking.asegurarAdministrador()` en las pruebas
 BDD): no hay endpoint para autopromoverse.
+
+### Validación, saneamiento y logs seguros (HU-10)
+
+Cada endpoint que escribe datos pasa por `validateRequest(schema)`
+(`src/middleware/validateRequest.ts`) antes de llegar al controlador: un
+esquema Zod (`src/validation/schemas.ts`) rechaza campos no declarados y
+tipos incorrectos con 400, y sanea texto libre (`trim`). Las reglas de
+negocio (formato de email, fuerza de contraseña, capacidad positiva...)
+siguen viviendo en los servicios; Zod solo valida la forma del body en el
+borde HTTP.
+
+```bash
+# Campo no declarado en el esquema -> 400
+curl -X POST http://localhost:3000/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"x@example.com","name":"X","password":"SecurePass123!","role":"ADMIN"}'
+
+# El nombre se guarda sin los espacios extra
+curl -X POST http://localhost:3000/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"y@example.com","name":"   Marta   ","password":"SecurePass123!"}'
+```
+
+**Inyección SQL/NoSQL:** no aplica a este sistema. Todo el acceso a datos
+pasa por Prisma (`src/repositories/PrismaRepositories.ts`), que parametriza
+las consultas; no hay ni una sola concatenación de SQL en el código.
+
+**Logs seguros:** un error inesperado (500) se registra con
+`src/logger.ts` (Pino), que censura `authorization`, `password` y `token`
+antes de escribir el log (`redact`). Antes de este cambio, `errorHandler`
+volcaba `req.body`/`req.headers` con `console.error`, texto plano incluido.
+Verificado en `tests/unit/logger.test.ts`.
 
 ### Estados, idempotencia y logout (HU-11, Unidad 5)
 
@@ -232,11 +266,11 @@ compilación estricta → pruebas unitarias con umbral de cobertura → pruebas 
 ## Estado de las pruebas
 
 ```
-Cucumber:  42 escenarios · 246 pasos · 42 passed
-Jest:      7 suites ·  76 tests  ·  76 passed · 91,8 % statements
+Cucumber:  49 escenarios · 278 pasos · 49 passed
+Jest:      8 suites ·  81 tests  ·  81 passed · 91,8 % statements
 ```
 
-Hay **una feature por cada historia del backlog** (6 funcionales + 4 técnicas),
+Hay **una feature por cada historia del backlog** (6 funcionales + 5 técnicas),
 cada una con su camino feliz y al menos un caso de error o límite:
 
 | Feature | Historia |
@@ -250,7 +284,8 @@ cada una con su camino feliz y al menos un caso de error o límite:
 | `07-rendimiento-api.feature` | HU-07 Rendimiento (técnica) |
 | `08-seguridad-datos.feature` | HU-08 Seguridad (técnica) |
 | `09-autenticacion-jwt.feature` | HU-09 Autenticación y autorización JWT (técnica) |
-| `11-sesiones-estados.feature` | HU-10 Gestión de sesiones y estados (técnica) |
+| `10-sanitizacion-validacion.feature` | HU-10 Saneamiento y validación de entradas (técnica) |
+| `11-sesiones-estados.feature` | HU-11 Gestión de sesiones y estados (técnica) |
 
 Los escenarios están redactados en español, siguiendo el ejemplo del propio
 `progXP.pdf` (palabras clave Gherkin en inglés, texto de la historia en

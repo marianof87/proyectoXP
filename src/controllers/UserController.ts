@@ -1,9 +1,15 @@
 import { NextFunction, Request, Response } from 'express';
+import { z } from 'zod';
 
 import { UnauthorizedError, ValidationError } from '../models/errors';
 import { SessionService } from '../services/SessionService';
 import { TokenService } from '../services/TokenService';
 import { UserService } from '../services/UserService';
+import {
+  addBalanceSchema,
+  loginSchema,
+  registerSchema,
+} from '../validation/schemas';
 
 export class UserController {
   constructor(
@@ -12,24 +18,21 @@ export class UserController {
     private readonly sessionService: SessionService
   ) {}
 
+  /** El body ya llegó validado y saneado por validateRequest(registerSchema). */
   register = async (
     req: Request,
     res: Response,
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { email, name, password } = req.body ?? {};
-
-      if (!email || !name || !password) {
-        throw new ValidationError(
-          'Missing required fields: email, name, password'
-        );
-      }
+      const { email, name, password } = req.body as z.infer<
+        typeof registerSchema
+      >;
 
       const user = await this.userService.registerUser({
-        email: String(email),
-        name: String(name),
-        password: String(password),
+        email,
+        name,
+        password,
       });
 
       res.status(201).json(user);
@@ -44,16 +47,9 @@ export class UserController {
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { email, password } = req.body ?? {};
+      const { email, password } = req.body as z.infer<typeof loginSchema>;
 
-      if (!email || !password) {
-        throw new ValidationError('Missing required fields: email, password');
-      }
-
-      const user = await this.userService.login({
-        email: String(email),
-        password: String(password),
-      });
+      const user = await this.userService.login({ email, password });
 
       const token = this.tokenService.generateToken({
         userId: user.id,
@@ -142,11 +138,7 @@ export class UserController {
   ): Promise<void> => {
     try {
       const userId = parseId(req.params.id, 'user ID');
-      const { amount } = req.body ?? {};
-
-      if (typeof amount !== 'number') {
-        throw new ValidationError('Amount must be a number');
-      }
+      const { amount } = req.body as z.infer<typeof addBalanceSchema>;
 
       res.json(await this.userService.addBalance(userId, amount));
     } catch (error) {

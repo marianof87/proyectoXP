@@ -1,7 +1,8 @@
 import { NextFunction, Request, Response } from 'express';
+import { z } from 'zod';
 
-import { ValidationError } from '../models/errors';
 import { ReservationService } from '../services/ReservationService';
+import { bookRoomSchema } from '../validation/schemas';
 import { parseId } from './UserController';
 
 export class ReservationController {
@@ -13,19 +14,15 @@ export class ReservationController {
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { userId, roomId, startDate, endDate } = req.body ?? {};
-
-      if (!userId || !roomId || !startDate || !endDate) {
-        throw new ValidationError(
-          'Missing required fields: userId, roomId, startDate, endDate'
-        );
-      }
+      const { userId, roomId, startDate, endDate } = req.body as z.infer<
+        typeof bookRoomSchema
+      >;
 
       const reservation = await this.reservationService.bookRoom({
-        userId: Number(userId),
-        roomId: Number(roomId),
-        startDate: new Date(String(startDate)),
-        endDate: new Date(String(endDate)),
+        userId,
+        roomId,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
       });
 
       res.status(201).json(reservation);

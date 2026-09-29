@@ -1,7 +1,8 @@
 import { NextFunction, Request, Response } from 'express';
+import { z } from 'zod';
 
-import { ValidationError } from '../models/errors';
 import { RoomService } from '../services/RoomService';
+import { checkAvailabilitySchema, createRoomSchema } from '../validation/schemas';
 import { parseId } from './UserController';
 
 export class RoomController {
@@ -13,19 +14,15 @@ export class RoomController {
     next: NextFunction
   ): Promise<void> => {
     try {
-      const { name, description, capacity, hourlyRate } = req.body ?? {};
-
-      if (!name || capacity === undefined || hourlyRate === undefined) {
-        throw new ValidationError(
-          'Missing required fields: name, capacity, hourlyRate'
-        );
-      }
+      const { name, description, capacity, hourlyRate } = req.body as z.infer<
+        typeof createRoomSchema
+      >;
 
       const room = await this.roomService.createRoom({
-        name: String(name),
-        description: description === undefined ? null : String(description),
-        capacity: Number(capacity),
-        hourlyRate: Number(hourlyRate),
+        name,
+        description: description ?? null,
+        capacity,
+        hourlyRate,
       });
 
       res.status(201).json(room);
@@ -74,16 +71,14 @@ export class RoomController {
   ): Promise<void> => {
     try {
       const roomId = parseId(req.params.id, 'room ID');
-      const { startDate, endDate } = req.body ?? {};
-
-      if (!startDate || !endDate) {
-        throw new ValidationError('Missing required fields: startDate, endDate');
-      }
+      const { startDate, endDate } = req.body as z.infer<
+        typeof checkAvailabilitySchema
+      >;
 
       const isAvailable = await this.roomService.checkRoomAvailability(
         roomId,
-        new Date(String(startDate)),
-        new Date(String(endDate))
+        new Date(startDate),
+        new Date(endDate)
       );
 
       res.json({ roomId, isAvailable });

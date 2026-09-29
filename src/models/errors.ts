@@ -40,9 +40,17 @@ export class ValidationError extends DomainError {
   }
 }
 
-/** 401 - credenciales incorrectas (HU-08, seguridad). */
+/** 401 - credenciales incorrectas, o token ausente/inválido (HU-08, HU-09). */
 export class UnauthorizedError extends DomainError {
   readonly statusCode = 401;
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/** 403 - autenticado, pero sin permiso sobre el recurso (HU-09, RBAC). */
+export class ForbiddenError extends DomainError {
+  readonly statusCode = 403;
   constructor(message: string) {
     super(message);
   }

@@ -12,7 +12,9 @@ import {
   CreateReservationData,
   CreateRoomData,
   CreateUserData,
+  IIdempotencyKeyRepository,
   IReservationRepository,
+  IRevokedTokenRepository,
   IRoomRepository,
   IUnitOfWork,
   IUserRepository,
@@ -186,10 +188,47 @@ export class InMemoryReservationRepository implements IReservationRepository {
   }
 }
 
+export class InMemoryIdempotencyKeyRepository
+  implements IIdempotencyKeyRepository
+{
+  private readonly keys = new Map<string, number>();
+
+  async findByKey(key: string): Promise<{ reservationId: number } | null> {
+    const reservationId = this.keys.get(key);
+    return reservationId === undefined ? null : { reservationId };
+  }
+
+  async save(key: string, reservationId: number): Promise<void> {
+    this.keys.set(key, reservationId);
+  }
+
+  async deleteAll(): Promise<void> {
+    this.keys.clear();
+  }
+}
+
+export class InMemoryRevokedTokenRepository implements IRevokedTokenRepository {
+  private readonly revoked = new Map<string, Date>();
+
+  async isRevoked(jti: string): Promise<boolean> {
+    return this.revoked.has(jti);
+  }
+
+  async revoke(jti: string, expiresAt: Date): Promise<void> {
+    this.revoked.set(jti, expiresAt);
+  }
+
+  async deleteAll(): Promise<void> {
+    this.revoked.clear();
+  }
+}
+
 export class InMemoryUnitOfWork implements IUnitOfWork {
   readonly users = new InMemoryUserRepository();
   readonly rooms = new InMemoryRoomRepository();
   readonly reservations = new InMemoryReservationRepository();
+  readonly idempotencyKeys = new InMemoryIdempotencyKeyRepository();
+  readonly revokedTokens = new InMemoryRevokedTokenRepository();
 
   /**
    * No hay transacciones reales en memoria: se ejecuta el trabajo tal cual.
@@ -204,5 +243,7 @@ export class InMemoryUnitOfWork implements IUnitOfWork {
     await this.users.deleteAll();
     await this.rooms.deleteAll();
     await this.reservations.deleteAll();
+    await this.idempotencyKeys.deleteAll();
+    await this.revokedTokens.deleteAll();
   }
 }

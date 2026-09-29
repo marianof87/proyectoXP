@@ -13,7 +13,9 @@ import {
   CreateReservationData,
   CreateRoomData,
   CreateUserData,
+  IIdempotencyKeyRepository,
   IReservationRepository,
+  IRevokedTokenRepository,
   IRoomRepository,
   IUnitOfWork,
   IUserRepository,
@@ -121,15 +123,57 @@ export class PrismaReservationRepository implements IReservationRepository {
   }
 }
 
+export class PrismaIdempotencyKeyRepository
+  implements IIdempotencyKeyRepository
+{
+  constructor(private readonly db: PrismaLike) {}
+
+  async findByKey(key: string): Promise<{ reservationId: number } | null> {
+    return this.db.idempotencyKey.findUnique({
+      where: { key },
+      select: { reservationId: true },
+    });
+  }
+
+  async save(key: string, reservationId: number): Promise<void> {
+    await this.db.idempotencyKey.create({ data: { key, reservationId } });
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.idempotencyKey.deleteMany({});
+  }
+}
+
+export class PrismaRevokedTokenRepository implements IRevokedTokenRepository {
+  constructor(private readonly db: PrismaLike) {}
+
+  async isRevoked(jti: string): Promise<boolean> {
+    const revoked = await this.db.revokedToken.findUnique({ where: { jti } });
+    return revoked !== null;
+  }
+
+  async revoke(jti: string, expiresAt: Date): Promise<void> {
+    await this.db.revokedToken.create({ data: { jti, expiresAt } });
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.revokedToken.deleteMany({});
+  }
+}
+
 export class PrismaUnitOfWork implements IUnitOfWork {
   readonly users: IUserRepository;
   readonly rooms: IRoomRepository;
   readonly reservations: IReservationRepository;
+  readonly idempotencyKeys: IIdempotencyKeyRepository;
+  readonly revokedTokens: IRevokedTokenRepository;
 
   constructor(private readonly client: PrismaClient) {
     this.users = new PrismaUserRepository(client);
     this.rooms = new PrismaRoomRepository(client);
     this.reservations = new PrismaReservationRepository(client);
+    this.idempotencyKeys = new PrismaIdempotencyKeyRepository(client);
+    this.revokedTokens = new PrismaRevokedTokenRepository(client);
   }
 
   /**
@@ -146,11 +190,15 @@ class TransactionalUnitOfWork implements IUnitOfWork {
   readonly users: IUserRepository;
   readonly rooms: IRoomRepository;
   readonly reservations: IReservationRepository;
+  readonly idempotencyKeys: IIdempotencyKeyRepository;
+  readonly revokedTokens: IRevokedTokenRepository;
 
   constructor(tx: Prisma.TransactionClient) {
     this.users = new PrismaUserRepository(tx);
     this.rooms = new PrismaRoomRepository(tx);
     this.reservations = new PrismaReservationRepository(tx);
+    this.idempotencyKeys = new PrismaIdempotencyKeyRepository(tx);
+    this.revokedTokens = new PrismaRevokedTokenRepository(tx);
   }
 
   async transaction<T>(work: (uow: IUnitOfWork) => Promise<T>): Promise<T> {

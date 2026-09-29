@@ -13,11 +13,13 @@ import { getPrismaClient } from './db';
 import { ReservationService } from './services/ReservationService';
 import { RoomService } from './services/RoomService';
 import { SecurityLogger, UserService } from './services/UserService';
+import { TokenService } from './services/TokenService';
 
 export interface Services {
   userService: UserService;
   roomService: RoomService;
   reservationService: ReservationService;
+  tokenService: TokenService;
 }
 
 export const createServices = (
@@ -27,6 +29,7 @@ export const createServices = (
   userService: new UserService(uow.users, logger),
   roomService: new RoomService(uow.rooms, uow.reservations),
   reservationService: new ReservationService(uow),
+  tokenService: new TokenService(),
 });
 
 /** Producción: PostgreSQL via Prisma. */

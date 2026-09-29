@@ -94,6 +94,17 @@
 - Los intentos fallidos de login se registran
 - Se validan todos los inputs de usuario para prevenir inyecciones
 
+### 9. Autenticación y Autorización con JWT
+**Como** sistema de reservas de coworking  
+**Quiero** emitir un token JWT al iniciar sesión y exigirlo en las rutas sensibles  
+**Para** que solo usuarios autenticados y autorizados accedan a esas operaciones
+
+**Criterios de Aceptación:**
+- El login exitoso devuelve, además del usuario, un token JWT firmado con expiración
+- Las rutas protegidas exigen un token válido (`Authorization: Bearer <token>`) y devuelven 401 si falta, es inválido o expiró
+- La creación de salas exige rol ADMIN y devuelve 403 si el usuario autenticado no lo tiene
+- Consultar o modificar el balance/las reservas de otro usuario exige rol ADMIN; el propio dueño del recurso siempre puede acceder
+
 ---
 
 ## Definiciones de Hecho (Definition of Done)
@@ -124,6 +135,7 @@ Una historia se considera completada cuando:
 | 🟡 Media | Cancelación de Reservas | 5 puntos |
 | 🔴 Alta | Rendimiento de API | 8 puntos |
 | 🔴 Alta | Seguridad de Datos | 8 puntos |
+| 🔴 Alta | Autenticación y Autorización con JWT | 8 puntos |
 
 ---
 
@@ -148,5 +160,7 @@ Administración
 Seguridad
 ├── Hashing de Contraseñas
 ├── Validación de Inputs
-└── Logging de Eventos
+├── Logging de Eventos
+├── Autenticación con JWT
+└── Autorización (por rol y por propiedad del recurso)
 ```

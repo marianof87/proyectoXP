@@ -72,20 +72,61 @@ prisma/schema.prisma          # Esquema de datos
 
 ## API
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/health` | Estado del servicio |
-| `POST` | `/api/users/register` | Registro de usuario |
-| `POST` | `/api/users/login` | Autenticación |
-| `GET` | `/api/users/:id` | Consultar usuario |
-| `POST` | `/api/users/:id/balance` | Añadir saldo |
-| `POST` | `/api/rooms` | Crear sala |
-| `GET` | `/api/rooms` | Listar salas |
-| `GET` | `/api/rooms/:id` | Consultar sala |
-| `POST` | `/api/rooms/:id/check-availability` | Comprobar disponibilidad |
-| `POST` | `/api/reservations` | Crear reserva |
-| `GET` | `/api/users/:userId/reservations` | Reservas de un usuario |
-| `DELETE` | `/api/reservations/:id` | Cancelar reserva |
+| Método | Ruta | Descripción | Acceso |
+|---|---|---|---|
+| `GET` | `/health` | Estado del servicio | Público |
+| `POST` | `/api/users/register` | Registro de usuario | Público |
+| `POST` | `/api/users/login` | Autenticación, devuelve `{ user, token }` | Público |
+| `GET` | `/api/users/me` | Perfil del usuario autenticado | Autenticado |
+| `GET` | `/api/users/:id` | Consultar usuario | Público |
+| `POST` | `/api/users/:id/balance` | Añadir saldo | Dueño o ADMIN |
+| `POST` | `/api/rooms` | Crear sala | ADMIN |
+| `GET` | `/api/rooms` | Listar salas | Público |
+| `GET` | `/api/rooms/:id` | Consultar sala | Público |
+| `POST` | `/api/rooms/:id/check-availability` | Comprobar disponibilidad | Público |
+| `POST` | `/api/reservations` | Crear reserva | Autenticado |
+| `GET` | `/api/users/:userId/reservations` | Reservas de un usuario | Dueño o ADMIN |
+| `DELETE` | `/api/reservations/:id` | Cancelar reserva | Autenticado |
+
+### Autenticación y autorización (HU-09)
+
+El login devuelve un JWT (`Authorization: Bearer <token>`, expira en 1h) que
+las rutas protegidas exigen. Hay dos niveles de autorización, además de la
+autenticación simple:
+
+- **Por rol** (RBAC): `POST /api/rooms` exige rol `ADMIN` → 403 si no lo tiene.
+- **Por propiedad del recurso**: `POST /api/users/:id/balance` y
+  `GET /api/users/:userId/reservations` exigen ser el dueño del recurso o
+  `ADMIN` → 403 si un usuario intenta acceder a datos de otro.
+
+Sin token, o con uno inválido/expirado, cualquier ruta protegida responde 401.
+
+```bash
+# 1. Registro e inicio de sesión
+curl -X POST http://localhost:3000/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"carla@example.com","name":"Carla","password":"SecurePass123!"}'
+
+TOKEN=$(curl -s -X POST http://localhost:3000/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"carla@example.com","password":"SecurePass123!"}' | jq -r .token)
+
+# 2. Ruta protegida por autenticación
+curl http://localhost:3000/api/users/me -H "Authorization: Bearer $TOKEN"
+
+# 3. Ruta protegida por rol (falla con 403 si no es ADMIN)
+curl -X POST http://localhost:3000/api/rooms \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"name":"Sala Premium","capacity":8,"hourlyRate":150}'
+
+# 4. Ruta protegida por propiedad del recurso (falla con 403 sobre otro id)
+curl http://localhost:3000/api/users/999/reservations -H "Authorization: Bearer $TOKEN"
+```
+
+Como el registro público siempre asigna rol `USER`, un usuario `ADMIN` de
+prueba se crea directamente en la base de datos (o en el repositorio en
+memoria, como hace `MundoCoworking.asegurarAdministrador()` en las pruebas
+BDD): no hay endpoint para autopromoverse.
 
 ---
 
@@ -104,9 +145,11 @@ escenario o un test unitario **antes** de implementarlas.
 
 - La bitácora de intentos fallidos es una lista en memoria, no una tabla de
   auditoría: cumple el criterio de aceptación sin inventar requisitos.
-- No hay JWT ni sesiones: ninguna historia los pide todavía.
 - El `UnitOfWork` existe porque reservar toca dos entidades a la vez, no como
   abstracción preventiva.
+- JWT (HU-09) se añadió cuando la historia lo pidió, no antes: `TokenService`
+  solo firma/verifica el payload que le pasan, sin sesiones ni refresh tokens
+  que nadie ha pedido todavía.
 
 ### Refactorización continua
 
@@ -143,11 +186,11 @@ compilación estricta → pruebas unitarias con umbral de cobertura → pruebas 
 ## Estado de las pruebas
 
 ```
-Cucumber:  25 escenarios · 144 pasos · 25 passed
-Jest:      3 suites ·  55 tests  ·  55 passed · 91,6 % statements
+Cucumber:  34 escenarios · 186 pasos · 34 passed
+Jest:      5 suites ·  61 tests  ·  61 passed · 91,7 % statements
 ```
 
-Hay **una feature por cada historia del backlog** (6 funcionales + 2 técnicas),
+Hay **una feature por cada historia del backlog** (6 funcionales + 3 técnicas),
 cada una con su camino feliz y al menos un caso de error o límite:
 
 | Feature | Historia |
@@ -160,6 +203,7 @@ cada una con su camino feliz y al menos un caso de error o límite:
 | `06-cancelacion-reservas.feature` | HU-06 Cancelación de reservas |
 | `07-rendimiento-api.feature` | HU-07 Rendimiento (técnica) |
 | `08-seguridad-datos.feature` | HU-08 Seguridad (técnica) |
+| `09-autenticacion-jwt.feature` | HU-09 Autenticación y autorización JWT (técnica) |
 
 Los escenarios están redactados en español, siguiendo el ejemplo del propio
 `progXP.pdf` (palabras clave Gherkin en inglés, texto de la historia en

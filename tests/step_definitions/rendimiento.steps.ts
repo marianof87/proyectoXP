@@ -15,6 +15,8 @@ Given(
 
     await this.asegurarUsuario('Probador', 100_000);
     await this.asegurarSala('Sala Carga');
+    // HU-09: reservar ahora exige un token válido.
+    await this.iniciarSesion('Probador');
 
     // Carga concurrente sobre un endpoint de lectura, para que la petición
     // que se mide después compita de verdad con otras.
@@ -52,7 +54,10 @@ When(
     const inicio = Date.now();
     const respuesta = await fetch(`${urlBase}/api/reservations`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.tokenDe('Probador')}`,
+      },
       body: cuerpo,
     });
     this.ultimaDuracionMs = Date.now() - inicio;

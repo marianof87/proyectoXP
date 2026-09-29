@@ -1,10 +1,14 @@
 import { NextFunction, Request, Response } from 'express';
 
-import { ValidationError } from '../models/errors';
+import { UnauthorizedError, ValidationError } from '../models/errors';
+import { TokenService } from '../services/TokenService';
 import { UserService } from '../services/UserService';
 
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly tokenService: TokenService
+  ) {}
 
   register = async (
     req: Request,
@@ -48,6 +52,33 @@ export class UserController {
         email: String(email),
         password: String(password),
       });
+
+      const token = this.tokenService.generateToken({
+        userId: user.id,
+        role: user.role,
+      });
+
+      res.json({ user, token });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /** HU-09: perfil del usuario autenticado, resuelto a partir del token. */
+  me = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        throw new UnauthorizedError('No token provided');
+      }
+
+      const user = await this.userService.getUserById(req.user.userId);
+      if (!user) {
+        throw new UnauthorizedError('No token provided');
+      }
 
       res.json(user);
     } catch (error) {

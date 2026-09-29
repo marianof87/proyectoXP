@@ -11,6 +11,7 @@
  */
 
 import { After, setWorldConstructor, World, IWorldOptions } from '@cucumber/cucumber';
+import bcrypt from 'bcrypt';
 import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 
@@ -20,6 +21,7 @@ import { InMemoryUnitOfWork } from '../../src/repositories/InMemoryRepositories'
 import {
   ReservationResponse,
   RoomResponse,
+  toUserResponse,
   UserResponse,
 } from '../../src/models';
 
@@ -47,6 +49,15 @@ export class MundoCoworking extends World {
   ultimaContrasenaUsada?: string;
   /** Hash leído del almacén, para las aserciones de seguridad (HU-08). */
   hashAlmacenado?: string;
+
+  /** Contraseña en claro de cada usuario, para poder iniciar sesión (HU-09). */
+  readonly contrasenasDeUsuario = new Map<string, string>();
+  /** Token JWT obtenido tras iniciar sesión, indexado por nombre (HU-09). */
+  readonly tokensDeUsuario = new Map<string, string>();
+  ultimoToken?: string;
+  ultimoPerfil?: UserResponse;
+  /** Nombre del usuario que ejecutó la última acción autenticada (HU-09). */
+  ultimoActor?: string;
 
   private servidor?: Server;
 
@@ -87,11 +98,13 @@ export class MundoCoworking extends World {
       return actualizado;
     }
 
+    const contrasena = 'Password123!';
     const creado = await this.services.userService.registerUser({
       email: `${this.emailDe(nombre)}@example.com`,
       name: nombre,
-      password: 'Password123!',
+      password: contrasena,
     });
+    this.contrasenasDeUsuario.set(nombre, contrasena);
 
     const usuario =
       balance > 0
@@ -100,6 +113,65 @@ export class MundoCoworking extends World {
 
     this.usuarios.set(nombre, usuario);
     return usuario;
+  }
+
+  /**
+   * Crea un usuario ADMIN directamente en el repositorio (HU-09): el registro
+   * público (`userService.registerUser`) siempre asigna el rol USER, así que
+   * no hay otra forma de obtener un administrador de prueba.
+   */
+  async asegurarAdministrador(nombre: string): Promise<UserResponse> {
+    const existente = this.usuarios.get(nombre);
+    if (existente) return existente;
+
+    const contrasena = 'AdminPass123!';
+    const hashedPassword = await bcrypt.hash(contrasena, 4);
+    const creado = await this.uow.users.create({
+      email: `${this.emailDe(nombre)}@example.com`,
+      name: nombre,
+      password: hashedPassword,
+      role: 'ADMIN',
+      balance: 0,
+    });
+
+    const usuario = toUserResponse(creado);
+    this.usuarios.set(nombre, usuario);
+    this.contrasenasDeUsuario.set(nombre, contrasena);
+    return usuario;
+  }
+
+  /** Inicia sesión por HTTP y guarda el token para usarlo en peticiones posteriores. */
+  async iniciarSesion(nombre: string): Promise<void> {
+    const urlBase = await this.urlBase();
+    const usuario = this.obtenerUsuario(nombre);
+    const contrasena = this.contrasenasDeUsuario.get(nombre);
+    if (!contrasena) {
+      throw new Error(
+        `No se registró la contraseña de "${nombre}" en este escenario`
+      );
+    }
+
+    const respuesta = await fetch(`${urlBase}/api/users/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: usuario.email, password: contrasena }),
+    });
+
+    this.ultimoCodigoEstado = respuesta.status;
+    if (respuesta.ok) {
+      const cuerpo = (await respuesta.json()) as { token: string };
+      this.tokensDeUsuario.set(nombre, cuerpo.token);
+      this.ultimoToken = cuerpo.token;
+    }
+  }
+
+  /** Token JWT de un usuario que ya inició sesión en este escenario. */
+  tokenDe(nombre: string): string {
+    const token = this.tokensDeUsuario.get(nombre);
+    if (!token) {
+      throw new Error(`"${nombre}" no inició sesión en este escenario`);
+    }
+    return token;
   }
 
   /** Crea la sala si no existe, con una tarifa por hora opcional. */

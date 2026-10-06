@@ -190,3 +190,19 @@ Seguridad
 ├── Autorización (por rol y por propiedad del recurso)
 └── Revocación de Sesión (logout)
 ```
+
+## Hoja de ruta (en consideración, no implementado)
+
+- **HU-12 Concurrencia y paralelismo en reservas (técnica):** operaciones
+  transaccionales (`prisma.$transaction`) para que un fallo aislado no afecte al
+  resto, control de condiciones de carrera al reservar la misma sala/franja, y
+  un frontend estático servido por el propio backend con calendario por sala
+  para observar reservas simultáneas. Todo con datos simulados.
+- **Despliegue automático:** pendiente de elegir destino (VPS + Watchtower/
+  `podman auto-update`, o Render/Fly.io/Railway a partir del Dockerfile).
+
+## Entrega en contenedores (hecho)
+
+Dockerfile multi-etapa, `compose.yaml` (API + PostgreSQL con healthchecks),
+migraciones automáticas al arrancar y publicación de la imagen en GHCR vía
+GitHub Actions. Ver sección "Contenedor" del README.

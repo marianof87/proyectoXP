@@ -1,0 +1,35 @@
+# Uso: podman compose up --build   (o docker compose up --build)
+# Variables opcionales en .env (ver .env.example): JWT_SECRET, POSTGRES_PASSWORD, PORT.
+services:
+  db:
+    image: docker.io/library/postgres:16
+    environment:
+      POSTGRES_USER: coworking
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coworking}
+      POSTGRES_DB: coworking_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coworking -d coworking_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${API_IMAGE:-proyectoxp:latest}
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://coworking:${POSTGRES_PASSWORD:-coworking}@db:5432/coworking_db
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET en .env o en el entorno}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

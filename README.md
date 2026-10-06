@@ -7,7 +7,8 @@ Backend REST construido aplicando **Extreme Programming (XP)** y
 - **Framework web:** Express 5
 - **Pruebas BDD:** `@cucumber/cucumber` + `ts-node` · **Unitarias:** Jest
 - **Persistencia:** Prisma / PostgreSQL en producción, repositorios en memoria en las pruebas
-- **CI/CD:** GitHub Actions
+- **CI/CD:** GitHub Actions (CI + publicación de imagen en GHCR)
+- **Contenedores:** Dockerfile multi-etapa + `compose.yaml` (Podman/Docker)
 
 ---
 
@@ -37,6 +38,37 @@ tipos generados por Prisma.
 
 `npm run test:e2e` corre contra repositorios en memoria, así que se ejecuta en
 segundos y sin levantar PostgreSQL ni aplicar migraciones.
+
+### Contenedor (Docker / Podman)
+
+Todo el sistema (API + PostgreSQL 16) arranca con un solo comando, en cualquier
+host con Podman o Docker:
+
+```bash
+JWT_SECRET=<un-secreto-largo> podman compose up --build   # o: docker compose up --build
+curl localhost:3000/health                                 # {"status":"OK",...}
+./demo.sh                                                  # recorrido de la API de punta a punta
+podman compose down -v                                     # apaga y borra el volumen
+```
+
+| Archivo | Función |
+|---|---|
+| `Dockerfile` | Build multi-etapa sobre `node:22-slim` (Debian, por el módulo nativo `bcrypt`); la etapa final solo lleva dependencias de producción, corre como usuario no root y define `HEALTHCHECK` sobre `/health` |
+| `docker-entrypoint.sh` | Ejecuta `prisma migrate deploy` (idempotente) y luego arranca la API |
+| `compose.yaml` | Servicios `api` + `db`; la API espera a que Postgres esté *healthy*; datos en el volumen `pgdata`; `JWT_SECRET` es obligatorio |
+| `.dockerignore` | Deja fuera `.env`, `node_modules`, tests, etc. de la imagen |
+| `.github/workflows/publish.yml` | Tras pasar CI en `master`/`main` (o al crear un tag `v*`) publica la imagen en `ghcr.io/<owner>/<repo>` con tags `latest` y SHA |
+
+Notas:
+
+- Con Podman, construir con `podman build --format docker .` para conservar el
+  `HEALTHCHECK` (el formato OCI por defecto lo descarta).
+- Los secretos nunca se hornean en la imagen: se inyectan por entorno
+  (`.env` local, secretos del proveedor o de CI). `.env` sigue ignorado por git.
+- Probado con Podman 4.9 + `podman-compose` 1.0.6: imagen construida, migraciones
+  aplicadas al arrancar y `demo.sh` completo (9/9 pasos) contra el contenedor.
+- Para usar la imagen publicada sin compilar: `API_IMAGE=ghcr.io/<owner>/<repo>:latest`
+  antes de `compose up`.
 
 ### Base de datos (solo para `npm run dev`)
 

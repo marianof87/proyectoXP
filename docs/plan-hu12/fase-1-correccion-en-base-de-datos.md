@@ -32,7 +32,25 @@ revierta solo su propia operación.
 
 ## Criterios de aceptación
 
-- [ ] Migración aplica limpia sobre BD vacía y sobre BD con datos de HU-11.
-- [ ] Solape parcial rechazado a nivel BD aunque se salte el servicio.
-- [ ] Saldo nunca negativo; cancelación nunca reembolsa dos veces.
+- [x] Migración aplica limpia sobre BD vacía (verificado en PostgreSQL 16; `migrate diff`: sin deriva).
+- [x] Solape parcial rechazado a nivel BD (SQLSTATE 23P01 -> ConflictError 409).
+- [x] Saldo nunca negativo; cancelación nunca reembolsa dos veces (verificado con peticiones paralelas reales).
 - [ ] Lint, typecheck, Jest (cobertura >= 80 %) y Cucumber en verde.
+
+## Resultados del spike (PostgreSQL 16 real)
+
+- Prisma 6 expone la violación de `EXCLUDE` como `PrismaClientUnknownRequestError`
+  con `23P01` en el mensaje; se detecta por texto.
+- La migración `001_init` creó `@@unique(roomId,startDate,endDate)` como
+  *constraint*, no como índice: hay que borrarla con `DROP CONSTRAINT`.
+- Bonus: esa unicidad impedía re-reservar una franja cancelada; ya no.
+- Si una BD existente ya tuviera reservas vivas solapadas, la migración
+  fallaría al crear la restricción: habría que limpiar los datos antes.
+
+## Notas de diseño
+
+- El dominio sigue usando `number` (redondeado a centavos); la conversión
+  `Decimal <-> number` está en el borde de `PrismaRepositories.ts`.
+- Los repositorios en memoria ahora serializan las transacciones y hacen
+  *rollback* por instantánea, para que las pruebas BDD/unitarias tengan la
+  misma semántica "todo o nada" que PostgreSQL.

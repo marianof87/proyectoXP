@@ -23,6 +23,12 @@ export interface IUserRepository {
   create(data: CreateUserData): Promise<User>;
   /** Suma `amount` al balance (negativo para descontar). Devuelve el usuario. */
   incrementBalance(id: number, amount: number): Promise<User>;
+  /**
+   * HU-12: descuenta `amount` solo si el saldo alcanza, en una única
+   * operación atómica (sin leer antes). Devuelve `null` si no alcanza o el
+   * usuario no existe; nunca deja el saldo en negativo.
+   */
+  debitIfSufficient(id: number, amount: number): Promise<User | null>;
   deleteAll(): Promise<void>;
 }
 
@@ -56,7 +62,7 @@ export interface IReservationRepository {
   findByUserId(userId: number): Promise<Reservation[]>;
   /**
    * Reservas de `roomId` que se solapan con [startDate, endDate) y siguen
-   * vivas (PENDING o CONFIRMED). Solapamiento = inicio < fin_pedido &&
+   * vivas (PENDING, CONFIRMED o IN_PROGRESS). Solapamiento = inicio < fin_pedido &&
    * fin > inicio_pedido, de modo que 09:00-11:00 y 11:00-13:00 NO chocan.
    */
   findOverlapping(
@@ -64,8 +70,21 @@ export interface IReservationRepository {
     startDate: Date,
     endDate: Date
   ): Promise<Reservation[]>;
+  /**
+   * HU-12: lanza ConflictError si la franja choca con otra reserva viva de la
+   * sala. En PostgreSQL lo garantiza una restricción de exclusión, no el código.
+   */
   create(data: CreateReservationData): Promise<Reservation>;
   updateStatus(id: number, status: ReservationStatus): Promise<Reservation>;
+  /**
+   * HU-12: cambia el estado solo si sigue siendo `from` (compare-and-set
+   * atómico). Devuelve `null` si otro proceso lo cambió antes.
+   */
+  updateStatusIf(
+    id: number,
+    from: ReservationStatus,
+    to: ReservationStatus
+  ): Promise<Reservation | null>;
   deleteAll(): Promise<void>;
 }
 
@@ -75,6 +94,7 @@ export interface IReservationRepository {
  */
 export interface IIdempotencyKeyRepository {
   findByKey(key: string): Promise<{ reservationId: number } | null>;
+  /** Lanza IdempotencyKeyConflictError si la clave ya existe (carrera). */
   save(key: string, reservationId: number): Promise<void>;
   deleteAll(): Promise<void>;
 }

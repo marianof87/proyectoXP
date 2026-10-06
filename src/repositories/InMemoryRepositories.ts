@@ -20,7 +20,16 @@ import {
   IUserRepository,
 } from './interfaces';
 
-import { NotFoundError } from '../models/errors';
+import {
+  ConflictError,
+  IdempotencyKeyConflictError,
+  NotFoundError,
+} from '../models/errors';
+
+/** Estados que ocupan la sala (espejo de la restricción de exclusión SQL). */
+const LIVE_STATUSES: ReservationStatus[] = ['PENDING', 'CONFIRMED', 'IN_PROGRESS'];
+
+const roundCents = (value: number): number => Math.round(value * 100) / 100;
 
 export class InMemoryUserRepository implements IUserRepository {
   private readonly users = new Map<number, User>();
@@ -59,11 +68,35 @@ export class InMemoryUserRepository implements IUserRepository {
 
     const updated: User = {
       ...user,
-      balance: user.balance + amount,
+      balance: roundCents(user.balance + amount),
       updatedAt: new Date(),
     };
     this.users.set(id, updated);
     return { ...updated };
+  }
+
+  /** Sin `await` entre leer y escribir: atómico en el bucle de eventos. */
+  async debitIfSufficient(id: number, amount: number): Promise<User | null> {
+    const user = this.users.get(id);
+    if (!user || user.balance < amount) return null;
+
+    const updated: User = {
+      ...user,
+      balance: roundCents(user.balance - amount),
+      updatedAt: new Date(),
+    };
+    this.users.set(id, updated);
+    return { ...updated };
+  }
+
+  snapshot(): () => void {
+    const users = new Map(this.users);
+    const nextId = this.nextId;
+    return () => {
+      this.users.clear();
+      users.forEach((u, k) => this.users.set(k, u));
+      this.nextId = nextId;
+    };
   }
 
   async deleteAll(): Promise<void> {
@@ -146,7 +179,7 @@ export class InMemoryReservationRepository implements IReservationRepository {
       .filter(
         (r) =>
           r.roomId === roomId &&
-          (r.status === 'PENDING' || r.status === 'CONFIRMED') &&
+          LIVE_STATUSES.includes(r.status) &&
           r.startDate.getTime() < endDate.getTime() &&
           r.endDate.getTime() > startDate.getTime()
       )
@@ -154,6 +187,15 @@ export class InMemoryReservationRepository implements IReservationRepository {
   }
 
   async create(data: CreateReservationData): Promise<Reservation> {
+    // Espejo de la restricción de exclusión de PostgreSQL: choque -> 409.
+    if (
+      LIVE_STATUSES.includes(data.status) &&
+      (await this.findOverlapping(data.roomId, data.startDate, data.endDate))
+        .length > 0
+    ) {
+      throw new ConflictError('Room not available for selected time');
+    }
+
     const now = new Date();
     const reservation: Reservation = {
       id: this.nextId++,
@@ -182,6 +224,29 @@ export class InMemoryReservationRepository implements IReservationRepository {
     return { ...updated };
   }
 
+  async updateStatusIf(
+    id: number,
+    from: ReservationStatus,
+    to: ReservationStatus
+  ): Promise<Reservation | null> {
+    const reservation = this.reservations.get(id);
+    if (!reservation || reservation.status !== from) return null;
+
+    const updated: Reservation = { ...reservation, status: to, updatedAt: new Date() };
+    this.reservations.set(id, updated);
+    return { ...updated };
+  }
+
+  snapshot(): () => void {
+    const reservations = new Map(this.reservations);
+    const nextId = this.nextId;
+    return () => {
+      this.reservations.clear();
+      reservations.forEach((r, k) => this.reservations.set(k, r));
+      this.nextId = nextId;
+    };
+  }
+
   async deleteAll(): Promise<void> {
     this.reservations.clear();
     this.nextId = 1;
@@ -199,7 +264,16 @@ export class InMemoryIdempotencyKeyRepository
   }
 
   async save(key: string, reservationId: number): Promise<void> {
+    if (this.keys.has(key)) throw new IdempotencyKeyConflictError();
     this.keys.set(key, reservationId);
+  }
+
+  snapshot(): () => void {
+    const keys = new Map(this.keys);
+    return () => {
+      this.keys.clear();
+      keys.forEach((v, k) => this.keys.set(k, v));
+    };
   }
 
   async deleteAll(): Promise<void> {
@@ -230,12 +304,31 @@ export class InMemoryUnitOfWork implements IUnitOfWork {
   readonly idempotencyKeys = new InMemoryIdempotencyKeyRepository();
   readonly revokedTokens = new InMemoryRevokedTokenRepository();
 
+  /** Cola que serializa las transacciones (equivale a aislamiento serializable). */
+  private tail: Promise<unknown> = Promise.resolve();
+
   /**
-   * No hay transacciones reales en memoria: se ejecuta el trabajo tal cual.
-   * Basta para las pruebas, donde no hay concurrencia entre escenarios.
+   * Transacción simulada: las transacciones se ejecutan de una en una y, si
+   * `work` falla, se restaura el estado previo (rollback). Así los servicios
+   * se prueban con la misma semántica "todo o nada" que tiene PostgreSQL.
    */
   async transaction<T>(work: (uow: IUnitOfWork) => Promise<T>): Promise<T> {
-    return work(this);
+    const run = async (): Promise<T> => {
+      const restore = [
+        this.users.snapshot(),
+        this.reservations.snapshot(),
+        this.idempotencyKeys.snapshot(),
+      ];
+      try {
+        return await work(this);
+      } catch (error) {
+        restore.forEach((undo) => undo());
+        throw error;
+      }
+    };
+    const result = this.tail.then(run, run);
+    this.tail = result.catch(() => undefined);
+    return result;
   }
 
   /** Deja el almacén limpio entre escenarios de Cucumber. */

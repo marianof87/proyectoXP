@@ -1,5 +1,6 @@
 /** HU-03 Reserva de salas, HU-04 Visualizacion, HU-06 Cancelacion, HU-11 Estados/Idempotencia. */
 
+import { EventBus } from '../events/EventBus';
 import {
   Reservation,
   ReservationResponse,
@@ -41,8 +42,16 @@ export class ReservationService {
   constructor(
     private readonly uow: IUnitOfWork,
     /** Inyectado para poder fijar "ahora" en las pruebas. */
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    /** HU-12: opcional; si falta, el servicio funciona igual sin publicar. */
+    private readonly events?: EventBus
   ) {}
+
+  /** Reservas en un rango, para el calendario (HU-12). */
+  async getCalendar(from: Date, to: Date): Promise<ReservationResponse[]> {
+    const reservations = await this.uow.reservations.findBetween(from, to);
+    return reservations.map(toReservationResponse);
+  }
 
   /**
    * `idempotencyKey` es opcional (HU-11, Actividad B): si se repite una
@@ -61,8 +70,10 @@ export class ReservationService {
   ): Promise<ReservationResponse> {
     this.validateDateRange(input.startDate, input.endDate);
 
+    let isNew = false;
     try {
       const reservation = await this.uow.transaction(async (tx) => {
+        isNew = false;
         if (idempotencyKey) {
           const replay = await this.findByIdempotencyKey(tx, idempotencyKey);
           if (replay) return replay;
@@ -111,10 +122,14 @@ export class ReservationService {
           await tx.idempotencyKeys.save(idempotencyKey, created.id);
         }
 
+        isNew = true;
         return created;
       });
 
-      return toReservationResponse(reservation);
+      const response = toReservationResponse(reservation);
+      // Solo tras el commit, y no en una repetición idempotente.
+      if (isNew) this.events?.publish('reservation.created', response);
+      return response;
     } catch (error) {
       // Carrera con la misma clave: la petición ganadora ya confirmó; se
       // devuelve su reserva en lugar de un error.
@@ -122,6 +137,7 @@ export class ReservationService {
         const replay = await this.findByIdempotencyKey(this.uow, idempotencyKey);
         if (replay) return toReservationResponse(replay);
       }
+      this.publishRejection(error, input);
       throw error;
     }
   }
@@ -161,7 +177,9 @@ export class ReservationService {
         `Cannot transition reservation from ${current?.status} to ${targetStatus}`
       );
     }
-    return toReservationResponse(updated);
+    const response = toReservationResponse(updated);
+    this.events?.publish('reservation.status', response);
+    return response;
   }
 
   async getUserReservations(userId: number): Promise<ReservationResponse[]> {
@@ -209,7 +227,26 @@ export class ReservationService {
       return cancelled;
     });
 
-    return toReservationResponse(updated);
+    const response = toReservationResponse(updated);
+    this.events?.publish('reservation.cancelled', response);
+    return response;
+  }
+
+  private publishRejection(error: unknown, input: BookRoomInput): void {
+    if (!this.events) return;
+    const attempt = {
+      roomId: input.roomId,
+      startDate: input.startDate,
+      endDate: input.endDate,
+    };
+    if (error instanceof ConflictError) {
+      this.events.publishRejected('CONFLICT', attempt);
+    } else if (
+      error instanceof ValidationError &&
+      error.message === 'Insufficient balance'
+    ) {
+      this.events.publishRejected('INSUFFICIENT_BALANCE', attempt);
+    }
   }
 
   private async findByIdempotencyKey(

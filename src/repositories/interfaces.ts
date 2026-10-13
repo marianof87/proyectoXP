@@ -70,6 +70,8 @@ export interface IReservationRepository {
     startDate: Date,
     endDate: Date
   ): Promise<Reservation[]>;
+  /** HU-12 (calendario): reservas que tocan [from, to), de cualquier estado. */
+  findBetween(from: Date, to: Date): Promise<Reservation[]>;
   /**
    * HU-12: lanza ConflictError si la franja choca con otra reserva viva de la
    * sala. En PostgreSQL lo garantiza una restricción de exclusión, no el código.

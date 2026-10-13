@@ -161,6 +161,16 @@ export class PrismaReservationRepository implements IReservationRepository {
     return rows.map(toReservation);
   }
 
+  async findBetween(from: Date, to: Date): Promise<Reservation[]> {
+    const rows = await this.db.reservation.findMany({
+      where: {
+        AND: [{ startDate: { lt: to } }, { endDate: { gt: from } }],
+      },
+      orderBy: { startDate: 'asc' },
+    });
+    return rows.map(toReservation);
+  }
+
   async create(data: CreateReservationData): Promise<Reservation> {
     try {
       return toReservation(await this.db.reservation.create({ data }));

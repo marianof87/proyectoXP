@@ -6,6 +6,7 @@
  * la construye con Prisma y las pruebas con repositorios en memoria.
  */
 
+import { EventBus } from './events/EventBus';
 import { IUnitOfWork } from './repositories/interfaces';
 import { InMemoryUnitOfWork } from './repositories/InMemoryRepositories';
 import { PrismaUnitOfWork } from './repositories/PrismaRepositories';
@@ -22,18 +23,26 @@ export interface Services {
   reservationService: ReservationService;
   tokenService: TokenService;
   sessionService: SessionService;
+  events: EventBus;
+  /** Para el simulador (HU-12): acceso directo a los repositorios. */
+  uow: IUnitOfWork;
 }
 
 export const createServices = (
   uow: IUnitOfWork,
   logger?: SecurityLogger
-): Services => ({
-  userService: new UserService(uow.users, logger),
-  roomService: new RoomService(uow.rooms, uow.reservations),
-  reservationService: new ReservationService(uow),
-  tokenService: new TokenService(),
-  sessionService: new SessionService(uow.revokedTokens),
-});
+): Services => {
+  const events = new EventBus();
+  return {
+    userService: new UserService(uow.users, logger),
+    roomService: new RoomService(uow.rooms, uow.reservations),
+    reservationService: new ReservationService(uow, () => new Date(), events),
+    tokenService: new TokenService(),
+    sessionService: new SessionService(uow.revokedTokens),
+    events,
+    uow,
+  };
+};
 
 /** Producción: PostgreSQL via Prisma. */
 export const createPrismaServices = (): Services =>

@@ -7,12 +7,16 @@
 
 import cors from 'cors';
 import express, { Express, Request, Response } from 'express';
+import path from 'path';
 
 import { Services } from './container';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
-import { createRouter } from './routes';
+import { createRouter, RouterOptions } from './routes';
 
-export const createApp = (services: Services): Express => {
+export const createApp = (
+  services: Services,
+  options: RouterOptions = {}
+): Express => {
   const app: Express = express();
 
   app.use(cors());
@@ -22,7 +26,10 @@ export const createApp = (services: Services): Express => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
   });
 
-  app.use('/api', createRouter(services));
+  app.use('/api', createRouter(services, options));
+
+  // Interfaz web de prueba/demostración (sin build): public/.
+  app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // El orden importa: 404 primero, manejador de errores al final.
   app.use(notFoundHandler);

@@ -16,6 +16,8 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": false,
 
+    /* Cada archivo debe poder transpilarse solo (lo usa ts-jest sin type-check). */
+    "isolatedModules": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

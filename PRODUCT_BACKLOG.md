@@ -193,13 +193,16 @@ Seguridad
 
 ## Hoja de ruta (en consideración, no implementado)
 
-- **HU-12 Concurrencia y paralelismo en reservas (técnica):** operaciones
-  transaccionales (`prisma.$transaction`) para que un fallo aislado no afecte al
-  resto, control de condiciones de carrera al reservar la misma sala/franja, y
-  un frontend estático servido por el propio backend con calendario por sala
-  para observar reservas simultáneas. Todo con datos simulados.
 - **Despliegue automático:** pendiente de elegir destino (VPS + Watchtower/
   `podman auto-update`, o Render/Fly.io/Railway a partir del Dockerfile).
+
+## HU-12 Concurrencia, límite de tasa y calendario en vivo (hecho)
+
+- Reservas transaccionales y libres de carreras (Fase 1), simulador
+  (`POST /api/sim/run`), limitación de tasa (429), calendario público + SSE e
+  interfaz web en `public/`. Ver README, sección HU-12, y `docs/plan-hu12/`.
+- Fase 2 hecha: 7 pruebas de concurrencia contra PostgreSQL real
+  (`npm run test:integration`), ejecutadas en CI con un servicio `postgres:16`.
 
 ## Entrega en contenedores (hecho)
 

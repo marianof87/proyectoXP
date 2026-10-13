@@ -71,3 +71,23 @@ export const advanceReservationStatusSchema = z
     status: z.enum(['IN_PROGRESS', 'COMPLETED']),
   })
   .strict();
+
+/** HU-12: parámetros del simulador, con topes para no saturar el servidor. */
+export const simulationSchema = z
+  .object({
+    operations: z.coerce.number().int().min(1).max(500).default(50),
+    concurrency: z.coerce.number().int().min(1).max(50).default(10),
+    seed: z.coerce.number().int().min(0).optional(),
+    delayMs: z.coerce.number().int().min(0).max(300).default(0),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .strict();
+
+/** HU-12: tráfico continuo en vivo (llegadas aleatorias). */
+export const autoSimulationSchema = z
+  .object({
+    ratePerSec: z.coerce.number().min(0.5).max(20).default(3),
+    maxSeconds: z.coerce.number().int().min(5).max(600).default(120),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .strict();

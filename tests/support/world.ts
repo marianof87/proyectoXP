@@ -16,6 +16,7 @@ import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 
 import { createApp } from '../../src/app';
+import type { RouterOptions } from '../../src/routes';
 import { createInMemoryServices, Services } from '../../src/container';
 import { InMemoryUnitOfWork } from '../../src/repositories/InMemoryRepositories';
 import {
@@ -60,6 +61,9 @@ export class MundoCoworking extends World {
   ultimoActor?: string;
   /** Primera respuesta al reservar con una clave de idempotencia (HU-11). */
   primeraReservaIdempotente?: ReservationResponse;
+
+  /** Opciones de la app HTTP (rate limit, simulador) que fija el escenario. */
+  opcionesApp: RouterOptions = {};
 
   private servidor?: Server;
 
@@ -223,7 +227,7 @@ export class MundoCoworking extends World {
    */
   async urlBase(): Promise<string> {
     if (!this.servidor) {
-      const app = createApp(this.services);
+      const app = createApp(this.services, this.opcionesApp);
       this.servidor = await new Promise<Server>((resolve) => {
         const escuchando = app.listen(0, () => resolve(escuchando));
       });

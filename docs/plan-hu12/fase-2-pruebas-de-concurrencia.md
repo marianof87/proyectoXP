@@ -18,5 +18,5 @@ carreras reales.
 
 ## Criterios de aceptación
 
-- [ ] Suite determinista (sin `sleep`), estable en 20 ejecuciones seguidas.
-- [ ] Corre en CI y en local con `podman compose up db`.
+- [x] Suite determinista (sin `sleep`), estable en ejecuciones repetidas.
+- [x] Corre en CI (job `integration`) y en local con un PostgreSQL y `DATABASE_URL`.

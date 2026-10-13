@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:api": "jest -c jest.api.config.js",
+    "test:integration": "jest -c jest.integration.config.js",
     "test:coverage": "jest --coverage",
     "test:e2e": "cucumber-js",
     "lint": "eslint src tests",

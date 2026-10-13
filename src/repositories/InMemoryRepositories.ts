@@ -186,6 +186,17 @@ export class InMemoryReservationRepository implements IReservationRepository {
       .map((r) => ({ ...r }));
   }
 
+  async findBetween(from: Date, to: Date): Promise<Reservation[]> {
+    return Array.from(this.reservations.values())
+      .filter(
+        (r) =>
+          r.startDate.getTime() < to.getTime() &&
+          r.endDate.getTime() > from.getTime()
+      )
+      .sort((a, b) => a.startDate.getTime() - b.startDate.getTime())
+      .map((r) => ({ ...r }));
+  }
+
   async create(data: CreateReservationData): Promise<Reservation> {
     // Espejo de la restricción de exclusión de PostgreSQL: choque -> 409.
     if (

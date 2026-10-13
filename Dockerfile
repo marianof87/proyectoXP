@@ -27,6 +27,8 @@ RUN npm ci --omit=dev && npm install --no-save prisma@6.19.3 && npm cache clean 
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
+# Interfaz web estática (HU-12): la sirve Express desde ../public.
+COPY public ./public
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh && chown -R node:node /app
 USER node

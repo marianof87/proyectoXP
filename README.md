@@ -34,6 +34,8 @@ tipos generados por Prisma.
 | `npm run lint` | ESLint (configuración *flat*, `eslint.config.js`) |
 | `npm test` | Pruebas unitarias (Jest) |
 | `npm run test:coverage` | Unitarias + cobertura (umbral 80 %) |
+| `npm run test:api` | Pruebas de API: HTTP real sobre repositorios en memoria (`tests/api`) |
+| `npm run test:integration` | Concurrencia contra **PostgreSQL real** (`tests/integration`, requiere `DATABASE_URL` con migraciones aplicadas) |
 | **`npm run test:e2e`** | **Pruebas BDD (Cucumber) — no necesita base de datos** |
 
 `npm run test:e2e` corre contra repositorios en memoria, así que se ejecuta en
@@ -123,6 +125,12 @@ prisma/schema.prisma          # Esquema de datos
 | `PATCH` | `/api/reservations/:id/status` | Avanzar estado (`IN_PROGRESS`/`COMPLETED`) | ADMIN |
 | `DELETE` | `/api/reservations/:id` | Cancelar reserva | Autenticado |
 | `POST` | `/api/users/logout` | Revocar el token actual | Autenticado |
+| `GET` | `/api/reservations?from&to` | Calendario público (sala, franja, estado; máx. 31 días) | Público |
+| `GET` | `/api/events` | Eventos en vivo (SSE) tras cada commit | Público |
+| `POST` | `/api/sim/run` | Simulador de concurrencia (solo con `ENABLE_SIMULATOR=true`) | Público (demo) |
+| `POST` | `/api/sim/auto` · `/api/sim/auto/stop` · `GET /api/sim/auto` | Tráfico en vivo con llegadas aleatorias: iniciar, detener, estado (en vuelo, pico) | Público (demo) |
+| `POST` | `/api/sim/reset` | Vacía reservas y repone saldos de la demo | Público (demo) |
+| `GET` | `/api/sim/rate-test` | Punto con límite propio (20 por 10 s) para demostrar `429` | Público (demo) |
 
 ### Autenticación y autorización (HU-09)
 
@@ -229,6 +237,40 @@ la consulta en cada petición. Tras el logout, ese mismo token responde 401
 aunque su firma siga siendo válida.
 
 ---
+
+### Concurrencia simulada, límite de tasa e interfaz web (HU-12)
+
+La interfaz de pruebas está en `public/` (HTML/JS/CSS sin build) y la sirve el
+propio backend: con la API arriba, abrir `http://localhost:3000/`.
+
+| Panel | Qué demuestra |
+|---|---|
+| Modo presentación | «Demo guiada» (≈70 s) que se recorre sola: tráfico real, más carga, ráfaga de 300 operaciones y límite de tasa; tarjetas con *en vuelo ahora*, pico simultáneo, creadas/canceladas/rechazadas y eventos por segundo |
+| Actividad en vivo | Lista de eventos SSE, incluidos los intentos rechazados (⚠ rojo en el calendario) |
+| Calendario en vivo | Cuadrícula sala × hora (UTC) que se actualiza sola por SSE cuando alguien reserva/cancela |
+| 1 · Sesión | Registro, login (JWT), `/me`, logout (revocación) |
+| 2 · Reservar | Reserva, idempotencia (`X-Idempotency-Key`), **carrera ×5** (mismo horario: 1 gana, 4 conflictos), saldo, cancelación |
+| 3 · Simulador | N operaciones con concurrencia configurable y latencia simulada; al final comprueba **sin solapes y sin saldos negativos** |
+| 4 · Limitación de tasa | Ráfaga de peticiones → las que exceden el límite reciben `429` |
+| 5 · Petición libre | Cualquier endpoint (p. ej. `PATCH /api/reservations/:id/status` con el admin demo) |
+
+Con `ENABLE_SIMULATOR=true` (activo en `compose.yaml`) se siembran cuentas demo:
+`demo@coworking.demo` / `Demo1234!` (USER, saldo 500) y `admin@coworking.demo` /
+`DEMO_ADMIN_PASSWORD` (por defecto `Admin1234!`). **Apágalo en producción.**
+
+**Qué es "concurrencia" aquí.** Node ejecuta en un solo hilo: las peticiones se
+*intercalan* en el bucle de eventos y la corrección la arbitra PostgreSQL
+(restricción de exclusión para solapes, débito atómico para el saldo,
+compare-and-set para estados). No hay `worker_threads`: el paralelismo real se
+obtendría con varias réplicas del contenedor, seguras porque la garantía vive
+en la BD. El simulador reproduce ese tráfico con un semáforo (`src/sim/pool.ts`)
+y es reproducible con `seed`. Guion de demostración: `docs/guion-presentacion.md`.
+
+**Limitación de tasa** (`src/middleware/rateLimiter.ts`, ventana fija por IP):
+`RATE_LIMIT_MAX` (300/min) para toda `/api` y `RATE_LIMIT_AUTH_MAX` (20/min)
+para login y registro. Cabeceras `X-RateLimit-*` y `Retry-After`;
+`RATE_LIMIT_ENABLED=false` lo apaga. El estado es por proceso (con réplicas,
+cada una limita por separado) y el bus SSE también.
 
 ## Justificación de las decisiones XP
 

@@ -32,6 +32,11 @@ export interface AppOptions extends RouterOptions {
   };
   /** Usar X-Forwarded-For como IP del cliente (solo detrás de un proxy de confianza). */
   trustProxy?: boolean;
+  /**
+   * URL del servidor de control de coworking-traffic-sim (p. ej. http://sim:4000).
+   * Con ella el monitor puede arrancar y detener escenarios de carga.
+   */
+  simulatorControlUrl?: string;
 }
 
 /** Tope del pool desde el monitor: más hilos que núcleos lógicos solo agrega cambios de contexto. */
@@ -69,6 +74,8 @@ export const createApp = (
       threads.resize(pedido);
       res.json({ hilos: threads.current() });
     });
+
+    mountScenarioProxy(app, options.simulatorControlUrl);
   }
   app.use(express.json());
 
@@ -86,4 +93,53 @@ export const createApp = (
   app.use(errorHandler);
 
   return app;
+};
+
+/**
+ * Botones de carga del monitor: reenvía /monitor/escenarios/* al servidor de
+ * control del simulador (otro contenedor). Si no está configurado o no
+ * responde, se informa en vez de fallar en silencio.
+ */
+const mountScenarioProxy = (app: Express, controlUrl: string | undefined): void => {
+  const forward = async (res: Response, path: string, method: 'GET' | 'POST'): Promise<void> => {
+    if (!controlUrl) {
+      res.status(404).json({ error: 'Simulador no configurado (SIM_CONTROL_URL)' });
+      return;
+    }
+    try {
+      const upstream = await fetch(`${controlUrl}${path}`, { method, signal: AbortSignal.timeout(20_000) });
+      res.status(upstream.status).json(await upstream.json());
+    } catch {
+      res.status(502).json({ error: `El simulador no responde en ${controlUrl}` });
+    }
+  };
+
+  app.get('/monitor/escenarios', async (_req: Request, res: Response) => {
+    if (!controlUrl) {
+      res.json({ disponible: false, error: 'Simulador no configurado (SIM_CONTROL_URL)' });
+      return;
+    }
+    try {
+      const [lista, estado] = await Promise.all(
+        ['/escenarios', '/estado'].map(async (p) =>
+          (await fetch(`${controlUrl}${p}`, { signal: AbortSignal.timeout(3_000) })).json()
+        )
+      );
+      res.json({ disponible: true, escenarios: lista, estado });
+    } catch {
+      res.json({ disponible: false, error: `El simulador no responde en ${controlUrl}` });
+    }
+  });
+  app.post('/monitor/escenarios/detener', (_req: Request, res: Response) =>
+    forward(res, '/detener', 'POST')
+  );
+  app.post('/monitor/escenarios/:nombre', (req: Request, res: Response) => {
+    const nombre = String(req.params.nombre);
+    if (!/^[a-z-]+$/.test(nombre)) {
+      res.status(400).json({ error: 'Nombre de escenario inválido' });
+      return;
+    }
+    const tasa = typeof req.query.tasa === 'string' ? `?tasa=${encodeURIComponent(req.query.tasa)}` : '';
+    return forward(res, `/escenarios/${nombre}${tasa}`, 'POST');
+  });
 };

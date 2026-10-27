@@ -60,6 +60,8 @@ const app = createApp(services, {
   // Solo detrás de un proxy de confianza (o en la demo con IPs virtuales):
   // con esto el rate limit usa la IP de X-Forwarded-For.
   trustProxy: process.env.TRUST_PROXY === 'true',
+  // Botones de escenarios en el monitor: solo en modo demostración.
+  simulatorControlUrl: enableSimulator ? process.env.SIM_CONTROL_URL : undefined,
 });
 
 const startServer = async (): Promise<void> => {

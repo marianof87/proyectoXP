@@ -1,4 +1,4 @@
-import type { Server } from 'http';
+import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 
 import { AppOptions, createApp } from '../../src/app';
@@ -200,6 +200,57 @@ describe('GET /metrics/runtime (HU-13)', () => {
       const estados = [(await desde('10.0.0.1')).status, (await desde('10.0.0.2')).status, (await desde('10.0.0.3')).status];
 
       expect(estados).toEqual([200, 200, 429]);
+    });
+  });
+
+  describe('botones de escenarios (/monitor/escenarios → simulador)', () => {
+    let control: Server | undefined;
+    afterEach(() => control?.close());
+
+    /** Servidor de control falso: anota lo que le piden y responde como el real. */
+    const controlFalso = async (pedidos: string[]): Promise<string> => {
+      control = createServer((req, res) => {
+        pedidos.push(`${req.method} ${req.url}`);
+        res.writeHead(req.url?.startsWith('/escenarios/') ? 202 : 200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(req.url === '/escenarios' ? [{ nombre: 'baja' }] : { corriendo: false }));
+      });
+      await new Promise<void>((r) => control!.listen(0, '127.0.0.1', r));
+      return `http://127.0.0.1:${(control!.address() as AddressInfo).port}`;
+    };
+
+    it('sin simulador configurado lo informa como no disponible', async () => {
+      ctx = await start({ metrics: conMetricas() });
+
+      const body = await (await fetch(`${ctx.base}/monitor/escenarios`)).json();
+
+      expect(body).toEqual({ disponible: false, error: 'Simulador no configurado (SIM_CONTROL_URL)' });
+    });
+
+    it('reenvía el arranque con su tasa y la detención al servidor de control', async () => {
+      // Arrange
+      const pedidos: string[] = [];
+      ctx = await start({ metrics: conMetricas(), simulatorControlUrl: await controlFalso(pedidos) });
+
+      // Act
+      const estado = await (await fetch(`${ctx.base}/monitor/escenarios`)).json();
+      const arranque = await fetch(`${ctx.base}/monitor/escenarios/saturacion?tasa=30`, { method: 'POST' });
+      await fetch(`${ctx.base}/monitor/escenarios/detener`, { method: 'POST' });
+
+      // Assert
+      expect(estado).toEqual({ disponible: true, escenarios: [{ nombre: 'baja' }], estado: { corriendo: false } });
+      expect(arranque.status).toBe(202);
+      expect(pedidos).toEqual(
+        expect.arrayContaining(['POST /escenarios/saturacion?tasa=30', 'POST /detener'])
+      );
+    });
+
+    it('si el simulador no responde devuelve 502 con un mensaje claro', async () => {
+      ctx = await start({ metrics: conMetricas(), simulatorControlUrl: 'http://127.0.0.1:9' });
+
+      const res = await fetch(`${ctx.base}/monitor/escenarios/baja`, { method: 'POST' });
+
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ error: 'El simulador no responde en http://127.0.0.1:9' });
     });
   });
 });

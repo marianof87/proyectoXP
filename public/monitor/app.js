@@ -339,6 +339,92 @@ const redraw = () => {
 };
 
 // ---------------------------------------------------------------------------
+// Generador de carga: botones que arrancan escenarios en el simulador
+// ---------------------------------------------------------------------------
+
+const lg = { escenarios: [], estado: null, disponible: false };
+const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`;
+const ETAPAS = { preparacion: 'preparando usuarios virtuales', calentamiento: 'calentamiento', medicion: 'midiendo', fin: 'terminando' };
+
+const drawLoadGen = () => {
+  const corriendo = lg.estado?.corriendo;
+  const actual = lg.estado?.actual;
+  $('lgState').textContent = !lg.disponible
+    ? `no disponible: ${lg.error ?? ''}`
+    : corriendo ? `corriendo: ${actual.titulo}` : 'en espera';
+
+  if ($('lgButtons').childElementCount !== lg.escenarios.length) {
+    $('lgButtons').replaceChildren(...lg.escenarios.map((e) => {
+      const b = document.createElement('button');
+      b.className = 'lg-btn';
+      b.dataset.nombre = e.nombre;
+      b.innerHTML = `<strong>▶ ${e.titulo}</strong><span>${e.descripcion}</span>` +
+        (e.aceptaTasa ? `<label class="lg-rate">Logins/s <input type="number" min="1" max="1000" value="60" id="tasa-${e.nombre}"></label>` : '');
+      b.onclick = (ev) => {
+        if (ev.target.tagName === 'INPUT') return;
+        arrancar(e);
+      };
+      return b;
+    }));
+  }
+  document.querySelectorAll('.lg-btn').forEach((b) => {
+    b.disabled = !lg.disponible || Boolean(corriendo);
+    b.dataset.active = String(actual?.escenario === b.dataset.nombre);
+  });
+
+  $('lgProgress').hidden = !corriendo;
+  if (corriendo) {
+    const pct = actual.etapa === 'medicion' ? Math.min(100, (actual.medidoMs / actual.duracionMs) * 100) : 0;
+    $('lgFill').style.width = `${pct}%`;
+    const r = actual.resumen;
+    $('lgDetail').textContent =
+      `${ETAPAS[actual.etapa] ?? actual.etapa}` +
+      (actual.etapa === 'medicion' ? ` ${mmss(actual.medidoMs)} / ${mmss(actual.duracionMs)} · ${fmt(actual.tasaActual, 0)} sesiones/s` : '') +
+      ` · ${fmt(r.peticiones)} peticiones · ${fmt(r.rechazadas429)} con 429` +
+      (actual.deteniendo ? ' · deteniendo…' : '');
+  }
+  const u = lg.estado?.ultima;
+  $('lgLast').textContent = u
+    ? `Última corrida: ${u.titulo} (${u.motivo === 'completo' ? 'completa' : u.motivo === 'detenido' ? 'detenida' : `error: ${u.error}`}) · ` +
+      `${fmt(u.resumen.peticiones)} peticiones, ${fmt(u.resumen.peticionesPorSegundo, 1)}/s · ` +
+      `${fmt(u.resumen.admitidas)} admitidas · ${fmt(u.resumen.rechazadas429)} con 429 · ${fmt(u.resumen.erroresDeRed)} sin respuesta · ${fmt(u.resumen.errores5xx)} con 5xx`
+    : '';
+};
+
+const consultarLoadGen = async () => {
+  try {
+    const body = await (await fetch('/monitor/escenarios')).json();
+    lg.disponible = body.disponible;
+    lg.error = body.error;
+    if (body.disponible) {
+      lg.escenarios = body.escenarios;
+      lg.estado = body.estado;
+    }
+  } catch (err) {
+    lg.disponible = false;
+    lg.error = String(err);
+  }
+  drawLoadGen();
+};
+
+const arrancar = async (e) => {
+  const tasa = e.aceptaTasa ? Number($(`tasa-${e.nombre}`).value) : undefined;
+  const res = await fetch(`/monitor/escenarios/${e.nombre}${tasa ? `?tasa=${tasa}` : ''}`, { method: 'POST' });
+  if (!res.ok) $('lgState').textContent = (await res.json()).error;
+  consultarLoadGen();
+};
+
+$('lgStop').onclick = async () => {
+  $('lgStop').disabled = true;
+  await fetch('/monitor/escenarios/detener', { method: 'POST' });
+  $('lgStop').disabled = false;
+  consultarLoadGen();
+};
+
+setInterval(consultarLoadGen, 2000);
+consultarLoadGen();
+
+// ---------------------------------------------------------------------------
 // Conexión y controles
 // ---------------------------------------------------------------------------
 

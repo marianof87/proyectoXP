@@ -26,28 +26,31 @@ de tasa, hilos de trabajo repartidos entre los núcleos de la CPU
 
 ## Puesta en marcha
 
-Requiere Podman o Docker y los dos repositorios clonados uno al lado del otro:
+Requiere Git y Podman (con `podman-compose`) o Docker. Los dos repositorios
+van clonados uno al lado del otro:
 
 ```bash
 git clone https://github.com/marianof87/proyectoXP
 git clone https://github.com/marianof87/coworking-traffic-sim
 cd proyectoXP
 echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
-podman compose up --build        # o: docker compose up --build
+podman compose up -d --build     # o: docker compose up -d --build
 ```
+
+La primera vez tarda unos minutos (construye dos imágenes). Después:
+
+1. Abrir **http://localhost:3000/monitor/**.
+2. En **Generador de carga**, apretar un escenario (por ejemplo *Carga creciente*).
+3. Mirar cómo sube la presión: tráfico, núcleos, hilos, base de datos.
+   **■ Detener** lo corta en cualquier momento.
 
 | Dirección | Qué hay |
 | --- | --- |
+| http://localhost:3000/monitor/ | **Monitor de recursos** y botones de carga |
 | http://localhost:3000/ | Panel: calendario en vivo, reservas, carreras, simulador interno, ráfagas contra el rate limit |
-| http://localhost:3000/monitor/ | **Monitor de recursos** en vivo |
 | http://localhost:3000/api | La API REST (detalle en [docs/API.md](docs/API.md)) |
 
-El contenedor `sim` corre 3 minutos de tráfico y termina. Para otra corrida:
-
-```bash
-podman compose run --rm sim run -d 1m -r 30 -u 8   # 1 minuto, 30 sesiones/s
-podman compose run --rm sim smoke                  # valida el contrato de los endpoints
-```
+Apagar: `podman compose down` (agregar `-v` para borrar también la base).
 
 Cuentas demo: `demo@coworking.demo` / `Demo1234!` y `admin@coworking.demo` / `Admin1234!`.
 
@@ -72,7 +75,7 @@ Todo con datos reales, una muestra por segundo:
 | Reservas sin carreras: transacción + restricción de exclusión + débito condicional | `src/services/ReservationService.ts`, `prisma/` |
 | Límite de tasa por IP (300/min general, 20/min login y registro), con `Retry-After` | `src/middleware/rateLimiter.ts` |
 | Pool de worker threads para bcrypt, redimensionable en caliente con cola propia | `src/workers/` |
-| Escenarios de carga (baja, creciente, saturación, rate limit) | `escenarios.sh` |
+| Botones de carga: el monitor le pide escenarios al simulador (servidor de control) | `src/app.ts`, `public/monitor/`, `escenarios.sh` |
 | Monitor integrado: muestreo, cálculos, PostgreSQL, SSE y tablero | `src/monitor/`, `src/metrics/runtime.ts`, `public/monitor/` |
 | Simulador de tráfico: escalones de carga, mezcla de logins, una IP por usuario, admitidas contra rechazadas | repo `coworking-traffic-sim` |
 | Pruebas de concurrencia y rate limit desde el consumidor | `coworking-traffic-sim/src/e2e/` |
@@ -90,14 +93,24 @@ Todo con datos reales, una muestra por segundo:
 
 ## Escenarios de carga
 
-Con el stack arriba y el monitor abierto:
+Los cuatro escenarios están como botones en el monitor y también por consola
+(`escenarios.sh` hace lo mismo que los botones, con `curl`):
+
+| Escenario | Qué hace | Qué se ve |
+| --- | --- | --- |
+| Carga baja | 2 sesiones/s, 1 min | todo admitido, CPU casi en reposo |
+| Carga creciente | escalones 2 → 5 → 10 → 20 → 40 → 80 sesiones/s, 3 min | la presión sube por escalones: tráfico, CPU, event loop, transacciones |
+| Saturación de CPU | 60 logins/s (configurable), 2 min | cada login es un bcrypt en un worker thread: cola, hilos y núcleos al máximo |
+| Rate limit | 20 sesiones/s desde UNA sola IP, 1 min | la mayoría de las peticiones recibe 429 |
 
 ```bash
-./escenarios.sh baja             # 2 sesiones/s: todo admitido, CPU casi en reposo
-./escenarios.sh creciente        # escalones 2 → 5 → 10 → 20 → 40 → 80 sesiones/s (3 min)
-./escenarios.sh saturacion 60    # 60 logins/s: cada uno es un bcrypt en un worker thread
-./escenarios.sh rate-limit       # todo desde UNA IP: choca con el límite y llueven 429
+./escenarios.sh creciente        # o: baja · saturacion 60 · rate-limit
+./escenarios.sh estado
+./escenarios.sh detener
 ```
+
+Una corrida a medida, sin botones: `podman compose run --rm sim run -d 1m -r 30 -u 25`
+(opciones en el README del simulador).
 
 **De 1 hilo a muchos, en caliente.** El monitor tiene botones de *Hilos*
 (libuv, 1, 2, 4, 6, 12). Durante `saturacion`, empezar en 1 y pasar a 12:
@@ -125,8 +138,8 @@ límite frena a quien se excede y no a todo el simulador junto. Con
 
 Para cambiar variables de la API (`RATE_LIMIT_*`, `BCRYPT_ROUNDS`…) hay que
 recrear los contenedores: `podman compose down && podman compose up -d`.
-`--force-recreate` sobre un solo servicio falla en silencio si el contenedor
-`sim` existe.
+Con podman-compose 1.0.6, `--force-recreate` sobre un solo servicio falla en
+silencio porque `sim` depende de `api`.
 
 ## Pruebas
 

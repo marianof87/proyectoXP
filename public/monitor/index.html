@@ -125,6 +125,25 @@
       vertical-align: -1px; background: var(--swatch);
     }
 
+    .loadgen { margin-bottom: 6px; }
+    .lg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+    .lg-state { font-size: 13px; color: var(--text-secondary); }
+    .lg-buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+    .lg-btn {
+      text-align: left; padding: 10px 12px; border-radius: 8px; display: flex; flex-direction: column; gap: 3px;
+    }
+    .lg-btn strong { font-size: 14px; color: var(--text-primary); }
+    .lg-btn span { font-size: 12px; color: var(--text-secondary); line-height: 1.35; }
+    .lg-btn:not(:disabled):hover { border-color: var(--series-1); }
+    .lg-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .lg-btn[data-active="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); opacity: 1; }
+    .lg-rate { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+    .lg-rate input { width: 64px; font: inherit; padding: 2px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-1); color: var(--text-primary); }
+    .lg-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+    .lg-bar { flex: 1 1 200px; height: 8px; border-radius: 4px; background: var(--seq-0); overflow: hidden; }
+    .lg-fill { height: 100%; width: 0; background: var(--series-1); transition: width .5s linear; }
+    button.danger { color: var(--critical); border-color: var(--critical); }
+    .lg-last { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
     .pool-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
     .pool-ctl #poolCtl { display: inline-flex; flex-wrap: wrap; gap: 4px; }
     .pool-ctl button { padding: 2px 9px; }
@@ -178,6 +197,21 @@
     <button id="toggleTable" aria-pressed="false">Ver tabla</button>
   </header>
   <p class="info" id="info">Esperando la primera lectura de /metrics/runtime…</p>
+
+  <section class="card loadgen" aria-labelledby="lgTitle">
+    <div class="lg-head">
+      <h2 id="lgTitle">Generador de carga · coworking-traffic-sim</h2>
+      <span class="lg-state" id="lgState">consultando…</span>
+    </div>
+    <p class="sub">Cada botón le pide al simulador (otro contenedor) que corra un escenario contra esta API. La presión aparece abajo en vivo.</p>
+    <div class="lg-buttons" id="lgButtons"></div>
+    <div class="lg-progress" id="lgProgress" hidden>
+      <div class="lg-bar"><div class="lg-fill" id="lgFill"></div></div>
+      <span id="lgDetail"></span>
+      <button id="lgStop" class="danger">■ Detener</button>
+    </div>
+    <p class="lg-last" id="lgLast"></p>
+  </section>
 
   <h3>Tráfico y concurrencia</h3>
   <section class="tiles" aria-label="Valores actuales">

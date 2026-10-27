@@ -4,19 +4,54 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-import { createApp } from './app';
+import { AppOptions, createApp } from './app';
 import { createPrismaServices } from './container';
 import { disconnectPrisma, getPrismaClient } from './db';
+import { createHttpMetrics, createRuntimeMetrics } from './metrics/runtime';
+import { MonitorService } from './monitor/MonitorService';
+import { createPostgresStats } from './monitor/postgresStats';
 import { rateLimitConfigFromEnv } from './middleware/rateLimiter';
 import { seedDemoAccounts } from './sim/Simulator';
+import {
+  createPasswordPool,
+  poolHasher,
+  resolveThreadCount,
+} from './workers/passwordPool';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
-const services = createPrismaServices();
+// HU-13: el pool de hilos carga el worker compilado (.js); con ts-node
+// (`npm run dev`) no existe, así que ahí se sigue con bcrypt sobre libuv.
+const runningCompiled = __filename.endsWith('.js');
+const workerThreads = runningCompiled
+  ? resolveThreadCount(process.env.WORKER_THREADS)
+  : 0;
+const passwordPool =
+  workerThreads > 0 ? createPasswordPool(workerThreads) : undefined;
+
+const services = createPrismaServices(
+  passwordPool ? poolHasher(passwordPool) : undefined
+);
 const enableSimulator = process.env.ENABLE_SIMULATOR === 'true';
+
+let metrics: AppOptions['metrics'];
+if (process.env.ENABLE_METRICS === 'true') {
+  const http = createHttpMetrics();
+  const monitor = new MonitorService({
+    runtime: createRuntimeMetrics({
+      http,
+      pool: passwordPool,
+      poolPurpose: 'bcrypt (registro y login)',
+    }),
+    db: createPostgresStats(getPrismaClient()),
+  });
+  metrics = { http, monitor };
+}
+
 const app = createApp(services, {
   rateLimit: rateLimitConfigFromEnv(),
   enableSimulator,
+  metrics,
 });
 
 const startServer = async (): Promise<void> => {
@@ -32,8 +67,16 @@ const startServer = async (): Promise<void> => {
       console.log('Simulator enabled: demo accounts and rooms seeded');
     }
 
+    metrics?.monitor.start();
+
     app.listen(port, () => {
       console.log(`Server running on port ${port}`);
+      console.log(
+        passwordPool
+          ? `Hash de contraseñas en ${workerThreads} worker threads`
+          : 'Hash de contraseñas en el pool de hilos de libuv'
+      );
+      if (metrics) console.log(`Monitor de recursos en http://localhost:${port}/monitor/`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -42,6 +85,8 @@ const startServer = async (): Promise<void> => {
 };
 
 const shutdown = async (): Promise<void> => {
+  metrics?.monitor.stop();
+  await passwordPool?.destroy();
   await disconnectPrisma();
   process.exit(0);
 };

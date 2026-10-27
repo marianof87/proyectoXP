@@ -5,8 +5,6 @@
  * conoce ni Prisma ni Express.
  */
 
-import bcrypt from 'bcrypt';
-
 import { toUserResponse, UserResponse } from '../models';
 import {
   ConflictError,
@@ -15,6 +13,7 @@ import {
   ValidationError,
 } from '../models/errors';
 import { IUserRepository } from '../repositories/interfaces';
+import { bcryptHasher, PasswordHasher } from './PasswordHasher';
 
 export interface RegisterUserInput {
   email: string;
@@ -55,7 +54,9 @@ export class UserService {
 
   constructor(
     private readonly users: IUserRepository,
-    private readonly logger: SecurityLogger = console
+    private readonly logger: SecurityLogger = console,
+    /** HU-13: dónde se calcula bcrypt (libuv por defecto, o worker threads). */
+    private readonly hasher: PasswordHasher = bcryptHasher
   ) {}
 
   async registerUser(input: RegisterUserInput): Promise<UserResponse> {
@@ -66,7 +67,7 @@ export class UserService {
       throw new ConflictError('Email already registered');
     }
 
-    const password = await bcrypt.hash(input.password, this.bcryptRounds());
+    const password = await this.hasher.hash(input.password, this.bcryptRounds());
 
     const user = await this.users.create({
       email: input.email,
@@ -123,7 +124,7 @@ export class UserService {
   }
 
   async verifyPassword(password: string, hash: string): Promise<boolean> {
-    return bcrypt.compare(password, hash);
+    return this.hasher.compare(password, hash);
   }
 
   /** Intentos fallidos registrados, opcionalmente filtrados por email. */

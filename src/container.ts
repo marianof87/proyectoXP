@@ -13,6 +13,7 @@ import { PrismaUnitOfWork } from './repositories/PrismaRepositories';
 import { getPrismaClient } from './db';
 import { ReservationService } from './services/ReservationService';
 import { RoomService } from './services/RoomService';
+import { PasswordHasher } from './services/PasswordHasher';
 import { SecurityLogger, UserService } from './services/UserService';
 import { SessionService } from './services/SessionService';
 import { TokenService } from './services/TokenService';
@@ -30,11 +31,12 @@ export interface Services {
 
 export const createServices = (
   uow: IUnitOfWork,
-  logger?: SecurityLogger
+  logger?: SecurityLogger,
+  hasher?: PasswordHasher
 ): Services => {
   const events = new EventBus();
   return {
-    userService: new UserService(uow.users, logger),
+    userService: new UserService(uow.users, logger, hasher),
     roomService: new RoomService(uow.rooms, uow.reservations),
     reservationService: new ReservationService(uow, () => new Date(), events),
     tokenService: new TokenService(),
@@ -44,9 +46,9 @@ export const createServices = (
   };
 };
 
-/** Producción: PostgreSQL via Prisma. */
-export const createPrismaServices = (): Services =>
-  createServices(new PrismaUnitOfWork(getPrismaClient()));
+/** Producción: PostgreSQL via Prisma (y, si se pasa, el pool de hilos de HU-13). */
+export const createPrismaServices = (hasher?: PasswordHasher): Services =>
+  createServices(new PrismaUnitOfWork(getPrismaClient()), undefined, hasher);
 
 /** Pruebas: almacén en memoria, sin base de datos. */
 export const createInMemoryServices = (): {

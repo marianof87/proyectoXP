@@ -49,7 +49,7 @@ describe('PasswordPoolManager (HU-13)', () => {
   });
 
   describe('cuando hay atraso y se pasa de 1 a 12 hilos en caliente', () => {
-    it('el pool nuevo toma toda la cola al instante y el viejo se cierra', async () => {
+    it('el pool nuevo toma toda la cola al instante y el viejo recibe la orden de cerrar', async () => {
       // Arrange: 1 tarea corriendo en el pool de 1 hilo y 4 esperando
       const registro: string[] = [];
       const pools = new Map<number, ReturnType<typeof poolControlado>>();
@@ -68,8 +68,9 @@ describe('PasswordPoolManager (HU-13)', () => {
       pools.get(12)!.liberarTodas();
       const hashes = await Promise.all(pedidos);
 
-      // Assert
-      expect(registro).toEqual(['run@1', 'run@12', 'run@12', 'run@12', 'run@12', 'close@1']);
+      // Assert: al viejo se le pide cerrar en el acto (piscina espera sola a
+      // su tarea en curso) y las 4 que esperaban van al pool de 12.
+      expect(registro).toEqual(['run@1', 'close@1', 'run@12', 'run@12', 'run@12', 'run@12']);
       expect(hashes).toEqual(['hash@1', 'hash@12', 'hash@12', 'hash@12', 'hash@12']);
       expect(manager.view()).toMatchObject({ maxThreads: 12, queueSize: 0, completed: 5 });
     });

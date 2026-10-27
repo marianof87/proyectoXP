@@ -1,4 +1,6 @@
-# proyectoXP — Plataforma de Reserva de Espacios de Coworking
+# proyectoXP — Documentación detallada de la API
+
+> Resumen del proyecto completo (los tres sistemas) en el [README](../README.md).
 
 Backend REST construido aplicando **Extreme Programming (XP)** y
 **Behavior-Driven Development (BDD)**, según los lineamientos de `progXP.pdf`.
@@ -57,7 +59,7 @@ podman compose down -v                                     # apaga y borra el vo
 |---|---|
 | `Dockerfile` | Build multi-etapa sobre `node:22-slim` (Debian, por el módulo nativo `bcrypt`); la etapa final solo lleva dependencias de producción, corre como usuario no root y define `HEALTHCHECK` sobre `/health` |
 | `docker-entrypoint.sh` | Ejecuta `prisma migrate deploy` (idempotente) y luego arranca la API |
-| `compose.yaml` | Servicios `api` + `db`; la API espera a que Postgres esté *healthy*; datos en el volumen `pgdata`; `JWT_SECRET` es obligatorio |
+| `compose.yaml` | Servicios `db` + `api` + `sim` (simulador de tráfico, desde `../coworking-traffic-sim`); la API espera a que Postgres esté *healthy* y el simulador a la API; datos en el volumen `pgdata`; `JWT_SECRET` es obligatorio |
 | `.dockerignore` | Deja fuera `.env`, `node_modules`, tests, etc. de la imagen |
 | `.github/workflows/publish.yml` | Tras pasar CI en `master`/`main` (o al crear un tag `v*`) publica la imagen en `ghcr.io/<owner>/<repo>` con tags `latest` y SHA |
 
@@ -261,9 +263,10 @@ Con `ENABLE_SIMULATOR=true` (activo en `compose.yaml`) se siembran cuentas demo:
 **Qué es "concurrencia" aquí.** Node ejecuta en un solo hilo: las peticiones se
 *intercalan* en el bucle de eventos y la corrección la arbitra PostgreSQL
 (restricción de exclusión para solapes, débito atómico para el saldo,
-compare-and-set para estados). No hay `worker_threads`: el paralelismo real se
-obtendría con varias réplicas del contenedor, seguras porque la garantía vive
-en la BD. El simulador reproduce ese tráfico con un semáforo (`src/sim/pool.ts`)
+compare-and-set para estados). Desde HU-13 el trabajo de CPU más caro (bcrypt)
+corre en un pool de `worker_threads` (ver «Hilos y monitor de recursos»); el
+paralelismo entre réplicas del contenedor también es seguro porque la garantía
+vive en la BD. El simulador reproduce ese tráfico con un semáforo (`src/sim/pool.ts`)
 y es reproducible con `seed`. Guion de demostración: `docs/guion-presentacion.md`.
 
 **Limitación de tasa** (`src/middleware/rateLimiter.ts`, ventana fija por IP):
@@ -271,6 +274,23 @@ y es reproducible con `seed`. Guion de demostración: `docs/guion-presentacion.m
 para login y registro. Cabeceras `X-RateLimit-*` y `Retry-After`;
 `RATE_LIMIT_ENABLED=false` lo apaga. El estado es por proceso (con réplicas,
 cada una limita por separado) y el bus SSE también.
+
+### Hilos y monitor de recursos (HU-13)
+
+- **Worker threads** (`src/workers/`, paquete `piscina`): el hash de contraseñas
+  de registro y login corre en un pool de hilos del sistema operativo.
+  `WORKER_THREADS=auto` usa un hilo por núcleo lógico (incluye hyperthreading);
+  `0` vuelve a bcrypt sobre los 4 hilos de libuv. Los hilos libres esperan en su
+  event loop (`atomics: 'disabled'`) para que su ocupación se mida bien.
+- **Monitor** (`src/monitor/`, `public/monitor/`), con `ENABLE_METRICS=true`:
+  `http://localhost:3000/monitor/`. Un muestreador por proceso toma una foto por
+  segundo y la difunde por SSE (`/monitor/events`); `/monitor/history` y
+  `/metrics/runtime` la exponen en JSON. Todo fuera de `/api`: el rate limit no
+  corta al monitor y su tráfico no se cuenta.
+- **Datos reales**: tiempos de CPU por núcleo lógico y topología de
+  hyperthreading (`/sys`), CPU/memoria/hilos del proceso (`/proc`), cgroup del
+  contenedor, event loop (`perf_hooks`), ocupación de cada worker thread y
+  PostgreSQL (`pg_stat_database`, `pg_stat_activity`).
 
 ## Justificación de las decisiones XP
 

@@ -40,6 +40,10 @@ services:
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
       RATE_LIMIT_AUTH_MAX: ${RATE_LIMIT_AUTH_MAX:-20}
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Admin1234!}
+      # Demo: el rate limit usa la IP de X-Forwarded-For, así cada usuario
+      # virtual del simulador cuenta por separado. Desactivar en producción
+      # salvo detrás de un proxy de confianza.
+      TRUST_PROXY: ${TRUST_PROXY:-true}
       # HU-13: bcrypt en worker threads (auto = núcleos lógicos, 0 = libuv)
       # y monitor de recursos en /monitor/ (+ GET /metrics/runtime).
       WORKER_THREADS: ${WORKER_THREADS:-auto}
@@ -47,7 +51,8 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # CMD-SHELL: la forma CMD la cita mal podman-compose 1.0.6.
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -63,11 +68,13 @@ services:
       BASE_URL: http://api:3000
       ADMIN_EMAIL: admin@coworking.demo
       ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Admin1234!}
-    # 8 usuarios = 16 altas/logins: entran en el límite de auth (20/min por IP).
-    # Una corrida y termina. Otra con otros parámetros:
+      # Una IP por usuario virtual (requiere TRUST_PROXY=true en la API).
+      SIM_IPS_VIRTUALES: ${SIM_IPS_VIRTUALES:-true}
+    # Una corrida y termina. Escenarios preparados: ./escenarios.sh
+    # Otra con otros parámetros:
     #   podman compose run --rm sim run -d 1m -r 60 -u 150
     #   podman compose run --rm sim smoke
-    command: ["run", "-d", "${SIM_DURACION:-3m}", "-r", "${SIM_RPS:-10}", "-u", "${SIM_USUARIOS:-8}"]
+    command: ["run", "-d", "${SIM_DURACION:-3m}", "-r", "${SIM_RPS:-10}", "-u", "${SIM_USUARIOS:-25}"]
     # Si arranca antes de que la API responda, el chequeo de salud falla y se reintenta.
     restart: on-failure
 

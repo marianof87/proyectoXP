@@ -199,7 +199,8 @@ export interface WorkerPoolView {
 
 export interface RuntimeMetricsOptions {
   http: HttpMetrics;
-  pool?: WorkerPoolView;
+  /** Función y no valor: el pool puede cambiar de tamaño en caliente. */
+  pool?: () => WorkerPoolView | undefined;
   /** Para qué se usa el pool (se muestra en el monitor). */
   poolPurpose?: string;
 }
@@ -289,7 +290,7 @@ export const createRuntimeMetrics = (
     };
     loopDelay.reset();
 
-    const pool = options.pool;
+    const pool = options.pool?.();
     const cpus = os.cpus();
     const mem = process.memoryUsage();
     return {

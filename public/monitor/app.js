@@ -228,7 +228,7 @@ const drawThreads = (sample) => {
   const root = $('threads');
   const info = state.info;
   if (info && !info.pool.enabled) {
-    root.innerHTML = '<div class="empty">Pool deshabilitado (WORKER_THREADS=0): bcrypt corre en los ' +
+    root.innerHTML = '<div class="empty">Sin pool de worker threads: bcrypt corre en los ' +
       `${info.uvThreadpoolSize} hilos de libuv, que el proceso no expone uno por uno.</div>`;
     return;
   }
@@ -298,6 +298,37 @@ const drawInfo = () => {
   if (i.pool.enabled) $('poolSub').textContent = `${i.pool.purpose}: % del último segundo que cada hilo estuvo trabajando.`;
 };
 
+// Tamaño del pool en caliente: de 1 hilo a todos los núcleos lógicos.
+const drawPoolControl = () => {
+  const i = state.info;
+  if (!i) return;
+  const actual = i.pool.enabled ? i.pool.maxThreads : 0;
+  const opciones = [...new Set([0, 1, 2, 4, Math.max(1, Math.floor(i.logicalCpus / 2)), i.logicalCpus])].sort((a, b) => a - b);
+  $('poolCtl').replaceChildren(...opciones.map((n) => {
+    const b = document.createElement('button');
+    b.textContent = n === 0 ? 'libuv' : n === i.logicalCpus ? `${n} (todos)` : String(n);
+    b.title = n === 0 ? 'Sin pool: bcrypt en los 4 hilos de libuv' : `${n} worker thread${n > 1 ? 's' : ''}`;
+    b.setAttribute('aria-pressed', String(n === actual));
+    b.onclick = () => cambiarHilos(n);
+    return b;
+  }));
+};
+
+const cambiarHilos = async (n) => {
+  $('poolMsg').textContent = 'cambiando…';
+  try {
+    const res = await fetch('/monitor/hilos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hilos: n }),
+    });
+    const body = await res.json();
+    $('poolMsg').textContent = res.ok ? '' : body.error;
+  } catch (err) {
+    $('poolMsg').textContent = String(err);
+  }
+};
+
 const redraw = () => {
   const last = state.history[state.history.length - 1];
   drawTiles(last);
@@ -324,6 +355,7 @@ const connect = () => {
     state.info = JSON.parse(e.data);
     $('cores').dataset.built = '';
     drawInfo();
+    drawPoolControl();
     buildCharts();
     redraw();
   });

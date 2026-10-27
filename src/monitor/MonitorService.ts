@@ -70,9 +70,11 @@ export class MonitorService {
     this.collecting = true;
     try {
       const snapshot = await this.collect();
-      if (!this.info || !this.previous) {
-        this.info = hostInfo(snapshot);
-        this.broadcast('info', this.info);
+      // La cabecera cambia si se redimensiona el pool de hilos: se reenvía.
+      const info = hostInfo(snapshot);
+      if (!this.info || JSON.stringify(info) !== JSON.stringify(this.info)) {
+        this.info = info;
+        this.broadcast('info', info);
       }
       if (this.previous) {
         const sample = derive(this.previous, snapshot);

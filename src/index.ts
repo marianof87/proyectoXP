@@ -12,11 +12,7 @@ import { MonitorService } from './monitor/MonitorService';
 import { createPostgresStats } from './monitor/postgresStats';
 import { rateLimitConfigFromEnv } from './middleware/rateLimiter';
 import { seedDemoAccounts } from './sim/Simulator';
-import {
-  createPasswordPool,
-  poolHasher,
-  resolveThreadCount,
-} from './workers/passwordPool';
+import { PasswordPoolManager, resolveThreadCount } from './workers/passwordPool';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
@@ -26,12 +22,9 @@ const runningCompiled = __filename.endsWith('.js');
 const workerThreads = runningCompiled
   ? resolveThreadCount(process.env.WORKER_THREADS)
   : 0;
-const passwordPool =
-  workerThreads > 0 ? createPasswordPool(workerThreads) : undefined;
+const passwordPool = new PasswordPoolManager(workerThreads);
 
-const services = createPrismaServices(
-  passwordPool ? poolHasher(passwordPool) : undefined
-);
+const services = createPrismaServices(passwordPool.hasher);
 const enableSimulator = process.env.ENABLE_SIMULATOR === 'true';
 
 let metrics: AppOptions['metrics'];
@@ -40,18 +33,33 @@ if (process.env.ENABLE_METRICS === 'true') {
   const monitor = new MonitorService({
     runtime: createRuntimeMetrics({
       http,
-      pool: passwordPool,
+      pool: () => passwordPool.view(),
       poolPurpose: 'bcrypt (registro y login)',
     }),
     db: createPostgresStats(getPrismaClient()),
   });
-  metrics = { http, monitor };
+  metrics = {
+    http,
+    monitor,
+    // Cambiar el tamaño del pool desde el monitor es una función de demo:
+    // solo con el simulador habilitado y con el código compilado.
+    threads:
+      enableSimulator && runningCompiled
+        ? {
+            current: () => passwordPool.threads,
+            resize: (n: number) => passwordPool.resize(n),
+          }
+        : undefined,
+  };
 }
 
 const app = createApp(services, {
   rateLimit: rateLimitConfigFromEnv(),
   enableSimulator,
   metrics,
+  // Solo detrás de un proxy de confianza (o en la demo con IPs virtuales):
+  // con esto el rate limit usa la IP de X-Forwarded-For.
+  trustProxy: process.env.TRUST_PROXY === 'true',
 });
 
 const startServer = async (): Promise<void> => {
@@ -72,8 +80,8 @@ const startServer = async (): Promise<void> => {
     app.listen(port, () => {
       console.log(`Server running on port ${port}`);
       console.log(
-        passwordPool
-          ? `Hash de contraseñas en ${workerThreads} worker threads`
+        passwordPool.threads > 0
+          ? `Hash de contraseñas en ${passwordPool.threads} worker threads`
           : 'Hash de contraseñas en el pool de hilos de libuv'
       );
       if (metrics) console.log(`Monitor de recursos en http://localhost:${port}/monitor/`);

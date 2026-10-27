@@ -57,7 +57,8 @@ Todo con datos reales, una muestra por segundo:
 
 - **Núcleos de la CPU**: cada núcleo físico con sus núcleos lógicos. Los que
   tienen dos son *hyperthreading* (en un i5-1335U: 2 núcleos P con HT + 8 E = 12 lógicos).
-- **Worker threads**: ocupación de cada hilo del pool que calcula bcrypt.
+- **Worker threads**: ocupación de cada hilo del pool que calcula bcrypt, y
+  botones para cambiar el tamaño del pool en caliente.
 - **Tráfico**: peticiones admitidas, **rechazadas con 429** y errores 5xx por segundo; peticiones en vuelo.
 - **Hilo principal**: ocupación del event loop y su demora.
 - **Servidor**: hilos del sistema operativo del proceso, CPU y memoria del
@@ -70,9 +71,10 @@ Todo con datos reales, una muestra por segundo:
 | --- | --- |
 | Reservas sin carreras: transacción + restricción de exclusión + débito condicional | `src/services/ReservationService.ts`, `prisma/` |
 | Límite de tasa por IP (300/min general, 20/min login y registro), con `Retry-After` | `src/middleware/rateLimiter.ts` |
-| Pool de worker threads para bcrypt, un hilo por núcleo lógico | `src/workers/` |
+| Pool de worker threads para bcrypt, redimensionable en caliente con cola propia | `src/workers/` |
+| Escenarios de carga (baja, creciente, saturación, rate limit) | `escenarios.sh` |
 | Monitor integrado: muestreo, cálculos, PostgreSQL, SSE y tablero | `src/monitor/`, `src/metrics/runtime.ts`, `public/monitor/` |
-| Simulador de tráfico con métricas de admitidas y rechazadas | repo `coworking-traffic-sim` |
+| Simulador de tráfico: escalones de carga, mezcla de logins, una IP por usuario, admitidas contra rechazadas | repo `coworking-traffic-sim` |
 | Pruebas de concurrencia y rate limit desde el consumidor | `coworking-traffic-sim/src/e2e/` |
 
 ### Optimizaciones
@@ -86,20 +88,45 @@ Todo con datos reales, una muestra por segundo:
   pestañas abiertas; si la base tarda, se salta un turno en vez de apilar consultas.
 - **Monitor fuera de `/api`**: no lo frena el rate limit y su tráfico no se cuenta.
 
-## Experimentos
+## Escenarios de carga
+
+Con el stack arriba y el monitor abierto:
 
 ```bash
-# Pool de hilos contra libuv: comparar latencia de login y demora del event loop
-RATE_LIMIT_MAX=1000000 RATE_LIMIT_AUTH_MAX=1000000 WORKER_THREADS=auto podman compose up -d --force-recreate api
-podman compose run --rm sim run -d 40s -r 60 -u 150 --max-concurrent 200
-#   repetir con WORKER_THREADS=0
-
-# Rate limit: con los límites por defecto, más usuarios de los que entran en 20 logins/min
-podman compose up -d --force-recreate api
-podman compose run --rm sim run -d 1m -r 20 -u 25
+./escenarios.sh baja             # 2 sesiones/s: todo admitido, CPU casi en reposo
+./escenarios.sh creciente        # escalones 2 → 5 → 10 → 20 → 40 → 80 sesiones/s (3 min)
+./escenarios.sh saturacion 60    # 60 logins/s: cada uno es un bcrypt en un worker thread
+./escenarios.sh rate-limit       # todo desde UNA IP: choca con el límite y llueven 429
 ```
 
-`--force-recreate` hace falta porque podman-compose no recrea el contenedor si solo cambió una variable.
+**De 1 hilo a muchos, en caliente.** El monitor tiene botones de *Hilos*
+(libuv, 1, 2, 4, 6, 12). Durante `saturacion`, empezar en 1 y pasar a 12:
+
+| Medido (60 logins/s, i5-1335U) | 1 hilo | primeros 5 s con 12 | resto con 12 |
+| --- | --- | --- | --- |
+| Cola de logins (media) | 440 | se vacía | 102 |
+| Hashes por segundo | 19 | 151 | 74 |
+| CPU de la API | 1,1 núcleos | 9,3 núcleos | 8,7 núcleos |
+
+Con 1 hilo la cola crece y muchos logins superan el timeout de 10 s del
+simulador. Con 12 la cola se vacía en segundos y se encienden casi todos los
+núcleos. A 60 logins/s, 12 hilos también quedan al límite: el simulador,
+PostgreSQL y la API comparten la misma máquina.
+
+**IPs virtuales.** El simulador manda una IP por usuario en `X-Forwarded-For`
+y la API la usa para el rate limit (`TRUST_PROXY=true`, activo en este compose
+de demostración; en producción, solo detrás de un proxy de confianza). Así el
+límite frena a quien se excede y no a todo el simulador junto. Con
+`rate-limit` se ve lo contrario: todos desde una IP.
+
+**Reparto de carga.** piscina entrega cada tarea a un hilo libre (barras de
+*Worker threads*) y el sistema operativo reparte esos hilos entre los núcleos
+(cuadrícula de *Núcleos*).
+
+Para cambiar variables de la API (`RATE_LIMIT_*`, `BCRYPT_ROUNDS`…) hay que
+recrear los contenedores: `podman compose down && podman compose up -d`.
+`--force-recreate` sobre un solo servicio falla en silencio si el contenedor
+`sim` existe.
 
 ## Pruebas
 

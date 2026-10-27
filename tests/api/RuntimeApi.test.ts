@@ -116,4 +116,90 @@ describe('GET /metrics/runtime (HU-13)', () => {
       expect(estado.history[0]!.cores).toHaveLength(estado.info.logicalCpus);
     });
   });
+
+  describe('POST /monitor/hilos (demo de paralelismo)', () => {
+    it('sin el control habilitado responde 404', async () => {
+      ctx = await start({ metrics: conMetricas() });
+
+      const res = await fetch(`${ctx.base}/monitor/hilos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hilos: 4 }),
+      });
+
+      expect(res.status).toBe(404);
+    });
+
+    it.each([[-1], [65], [2.5], ['4']])('con hilos=%j responde 400 sin redimensionar', async (hilos) => {
+      // Arrange
+      const pedidos: number[] = [];
+      ctx = await start({
+        metrics: { ...conMetricas()!, threads: { current: () => 1, resize: async (n) => void pedidos.push(n) } },
+      });
+
+      // Act
+      const res = await fetch(`${ctx.base}/monitor/hilos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hilos }),
+      });
+
+      // Assert
+      expect(res.status).toBe(400);
+      expect(pedidos).toEqual([]);
+    });
+
+    it('con un tamaño válido redimensiona y devuelve el tamaño vigente', async () => {
+      // Arrange
+      let actual = 1;
+      ctx = await start({
+        metrics: {
+          ...conMetricas()!,
+          threads: { current: () => actual, resize: async (n) => void (actual = n) },
+        },
+      });
+
+      // Act
+      const res = await fetch(`${ctx.base}/monitor/hilos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hilos: 12 }),
+      });
+
+      // Assert
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ hilos: 12 });
+    });
+  });
+
+  describe('rate limit con TRUST_PROXY y una IP por usuario (X-Forwarded-For)', () => {
+    it('limita a cada IP por separado: el que se excede recibe 429 y el otro sigue entrando', async () => {
+      // Arrange: cupo de 2 por IP
+      ctx = await start({
+        trustProxy: true,
+        rateLimit: { general: { windowMs: 60_000, max: 2 }, auth: { windowMs: 60_000, max: 2 } },
+      });
+      const desde = (ip: string) => fetch(`${ctx.base}/api/rooms`, { headers: { 'X-Forwarded-For': ip } });
+
+      // Act
+      const insistente = [];
+      for (let i = 0; i < 3; i += 1) insistente.push((await desde('10.0.0.7')).status);
+      const otro = (await desde('10.0.0.8')).status;
+
+      // Assert
+      expect(insistente).toEqual([200, 200, 429]);
+      expect(otro).toBe(200);
+    });
+
+    it('sin TRUST_PROXY ignora X-Forwarded-For: todas las peticiones cuentan como una sola IP', async () => {
+      ctx = await start({
+        rateLimit: { general: { windowMs: 60_000, max: 2 }, auth: { windowMs: 60_000, max: 2 } },
+      });
+      const desde = (ip: string) => fetch(`${ctx.base}/api/rooms`, { headers: { 'X-Forwarded-For': ip } });
+
+      const estados = [(await desde('10.0.0.1')).status, (await desde('10.0.0.2')).status, (await desde('10.0.0.3')).status];
+
+      expect(estados).toEqual([200, 200, 429]);
+    });
+  });
 });

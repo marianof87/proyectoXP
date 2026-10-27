@@ -16,7 +16,7 @@ model User {
   name      String
   password  String
   role      Role    @default(USER)
-  balance   Float   @default(0)
+  balance   Decimal @default(0) @db.Decimal(12, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
@@ -30,7 +30,7 @@ model Room {
   name        String  @unique
   description String?
   capacity    Int
-  hourlyRate  Float
+  hourlyRate  Decimal @db.Decimal(12, 2)
   available   Boolean @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -47,7 +47,7 @@ model Reservation {
   startDate DateTime
   endDate   DateTime
   status    ReservationStatus @default(PENDING)
-  totalCost Float
+  totalCost Decimal @db.Decimal(12, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -55,7 +55,8 @@ model Reservation {
   room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
   idempotencyKey IdempotencyKey?
 
-  @@unique([roomId, startDate, endDate])
+  // HU-12: el solape lo impide una restricción de exclusión (SQL crudo en la
+  // migración 20261006000000_hu12_...): Prisma no modela EXCLUDE USING gist.
   // Índices creados en 001_init (HU-07): consultas por usuario, sala y estado.
   @@index([userId])
   @@index([roomId])

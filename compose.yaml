@@ -1,0 +1,83 @@
+# Los tres sistemas del simulador de coworking (ver README.md):
+#   db   PostgreSQL 16
+#   api  proyectoXP: API + panel web (/) + monitor de recursos (/monitor/)
+#   sim  coworking-traffic-sim: genera tráfico contra la API a pedido (botones
+#        del monitor); necesita el repo clonado al lado: ../coworking-traffic-sim
+#
+# Uso: podman compose up --build   (o docker compose up --build)
+# Variables opcionales en .env (ver .env.example): JWT_SECRET, POSTGRES_PASSWORD,
+# PORT, WORKER_THREADS, RATE_LIMIT_*, TRUST_PROXY, SIM_IPS_VIRTUALES.
+services:
+  db:
+    image: docker.io/library/postgres:16
+    environment:
+      POSTGRES_USER: coworking
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coworking}
+      POSTGRES_DB: coworking_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coworking -d coworking_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${API_IMAGE:-proyectoxp:latest}
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://coworking:${POSTGRES_PASSWORD:-coworking}@db:5432/coworking_db
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET en .env o en el entorno}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Modo demostración (HU-12): simulador + cuentas demo. Desactivar en producción.
+      ENABLE_SIMULATOR: ${ENABLE_SIMULATOR:-true}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      RATE_LIMIT_AUTH_MAX: ${RATE_LIMIT_AUTH_MAX:-20}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Admin1234!}
+      # Demo: el rate limit usa la IP de X-Forwarded-For, así cada usuario
+      # virtual del simulador cuenta por separado. Desactivar en producción
+      # salvo detrás de un proxy de confianza.
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      # Botones de carga del monitor: servidor de control del simulador.
+      SIM_CONTROL_URL: http://sim:4000
+      # HU-13: bcrypt en worker threads (auto = núcleos lógicos, 0 = libuv)
+      # y monitor de recursos en /monitor/ (+ GET /metrics/runtime).
+      WORKER_THREADS: ${WORKER_THREADS:-auto}
+      ENABLE_METRICS: ${ENABLE_METRICS:-true}
+    ports:
+      - "${PORT:-3000}:3000"
+    healthcheck:
+      # CMD-SHELL: la forma CMD la cita mal podman-compose 1.0.6.
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  sim:
+    image: ${SIM_IMAGE:-coworking-traffic-sim:latest}
+    build: ../coworking-traffic-sim
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      BASE_URL: http://api:3000
+      ADMIN_EMAIL: admin@coworking.demo
+      ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Admin1234!}
+      # Una IP por usuario virtual (requiere TRUST_PROXY=true en la API).
+      SIM_IPS_VIRTUALES: ${SIM_IPS_VIRTUALES:-true}
+    # Modo servicio: espera los botones del monitor (/monitor/) o
+    # ./escenarios.sh. Una corrida suelta por consola:
+    #   podman compose run --rm sim run -d 1m -r 30 -u 25
+    #   podman compose run --rm sim smoke
+    command: ["control"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:

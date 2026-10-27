@@ -47,6 +47,9 @@ jobs:
       - name: Pruebas BDD (Cucumber)
         run: npm run test:e2e
 
+      - name: Pruebas de API (HTTP sobre repositorios en memoria)
+        run: npm run test:api
+
       - name: Compilar a dist/
         run: npm run build
 
@@ -59,6 +62,50 @@ jobs:
             reports/
             coverage/
           if-no-files-found: ignore
+
+  integration:
+    name: Concurrencia contra PostgreSQL real
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: coworking
+          POSTGRES_PASSWORD: coworking
+          POSTGRES_DB: coworking_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coworking -d coworking_db"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://coworking:coworking@localhost:5432/coworking_db
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Generar cliente de Prisma
+        run: npm run prisma:generate
+
+      - name: Aplicar migraciones
+        run: npx prisma migrate deploy
+
+      - name: Pruebas de concurrencia (HU-12, Fase 2)
+        run: npm run test:integration
 
   security:
     name: Auditoria de dependencias

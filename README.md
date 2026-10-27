@@ -1,293 +1,165 @@
-# proyectoXP — Plataforma de Reserva de Espacios de Coworking
+# Simulador de coworking: concurrencia, hilos y límites de tasa
 
-Backend REST construido aplicando **Extreme Programming (XP)** y
-**Behavior-Driven Development (BDD)**, según los lineamientos de `progXP.pdf`.
+Plataforma de reserva de salas de coworking construida con **XP y BDD**, más un
+banco de pruebas para ver **qué pasa adentro del servidor cuando recibe carga**:
+reservas que compiten por la misma franja, peticiones rechazadas por el límite
+de tasa, hilos de trabajo repartidos entre los núcleos de la CPU
+(hyperthreading incluido) y el uso real de CPU, memoria y base de datos.
 
-- **Entorno:** Node.js 22 · **Lenguaje:** TypeScript (`strict: true`)
-- **Framework web:** Express 5
-- **Pruebas BDD:** `@cucumber/cucumber` + `ts-node` · **Unitarias:** Jest
-- **Persistencia:** Prisma / PostgreSQL en producción, repositorios en memoria en las pruebas
-- **CI/CD:** GitHub Actions
+## Los tres sistemas
 
----
+```
+┌───────────────────────┐  HTTP  ┌──────────────────────────────┐  SQL  ┌───────────────┐
+│ sim                   │ ─────▶ │ api (proyectoXP)             │ ────▶ │ db            │
+│ coworking-traffic-sim │        │ · API REST       /api        │       │ PostgreSQL 16 │
+│ usuarios virtuales    │ ◀───── │ · panel web      /           │ ◀──── │               │
+└───────────────────────┘  JSON  │ · monitor        /monitor/   │       └───────────────┘
+                                 │ · bcrypt en worker threads   │
+                                 └──────────────────────────────┘
+```
+
+| Contenedor | Qué es | Repositorio |
+| --- | --- | --- |
+| `db` | PostgreSQL: arbitra las carreras (restricción de exclusión, débito atómico) | — |
+| `api` | La API de reservas, el panel web y el **monitor de recursos** | este |
+| `sim` | Genera tráfico realista: registra usuarios, reserva, cancela, provoca errores | [coworking-traffic-sim](https://github.com/marianof87/coworking-traffic-sim) |
 
 ## Puesta en marcha
 
-```bash
-npm install
-cp .env.example .env          # ajusta DATABASE_URL si vas a usar PostgreSQL
-npm run prisma:generate       # genera el cliente tipado (no necesita BD)
-```
-
-`prisma:generate` es obligatorio antes de compilar: `src/db.ts` importa los
-tipos generados por Prisma.
-
-### Comandos
-
-| Comando | Qué hace |
-|---|---|
-| `npm run dev` | Levanta la API en modo desarrollo (necesita PostgreSQL) |
-| `npm run build` | Compila `src/` a `dist/` |
-| `npm start` | Ejecuta la build (`dist/index.js`) |
-| `npm run typecheck` | `tsc --noEmit` sobre `src/` y `tests/` |
-| `npm run lint` | ESLint (configuración *flat*, `eslint.config.js`) |
-| `npm test` | Pruebas unitarias (Jest) |
-| `npm run test:coverage` | Unitarias + cobertura (umbral 80 %) |
-| **`npm run test:e2e`** | **Pruebas BDD (Cucumber) — no necesita base de datos** |
-
-`npm run test:e2e` corre contra repositorios en memoria, así que se ejecuta en
-segundos y sin levantar PostgreSQL ni aplicar migraciones.
-
-### Base de datos (solo para `npm run dev`)
+Requiere Git y Podman (con `podman-compose`) o Docker. Los dos repositorios
+van clonados uno al lado del otro:
 
 ```bash
-npm run prisma:migrate        # aplica las migraciones
+git clone https://github.com/marianof87/proyectoXP
+git clone https://github.com/marianof87/coworking-traffic-sim
+cd proyectoXP
+echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
+podman compose up -d --build     # o: docker compose up -d --build
 ```
 
----
+La primera vez tarda unos minutos (construye dos imágenes). Después:
 
-## Estructura del repositorio
+1. Abrir **http://localhost:3000/monitor/**.
+2. En **Generador de carga**, apretar un escenario (por ejemplo *Carga creciente*).
+3. Mirar cómo sube la presión: tráfico, núcleos, hilos, base de datos.
+   **■ Detener** lo corta en cualquier momento.
 
-```
-.github/workflows/main.yml    # Pipeline de CI
-features/                     # Historias en Gherkin (una por HU)
-tests/
-  support/world.ts            # World compartido de Cucumber (MundoCoworking)
-  step_definitions/           # Implementación de los pasos
-  unit/                       # Pruebas unitarias con Jest
-src/
-  controllers/                # HTTP: parámetros y serialización
-  services/                   # Lógica de negocio (sin Express ni Prisma)
-  repositories/               # Acceso a datos: interfaces + Prisma + en memoria
-  models/                     # Tipos de dominio y errores
-  middleware/                 # Auth, validación de entrada, manejo de errores
-  validation/                 # Esquemas Zod del body de cada ruta
-  logger.ts                   # Logger (Pino) con redacción de datos sensibles
-  routes/                     # Definición de endpoints
-  container.ts                # Raíz de composición (inyección de dependencias)
-  app.ts                      # Construcción de la app Express
-  index.ts                    # Punto de entrada
-prisma/schema.prisma          # Esquema de datos
-```
+| Dirección | Qué hay |
+| --- | --- |
+| http://localhost:3000/monitor/ | **Monitor de recursos** y botones de carga |
+| http://localhost:3000/ | Panel: calendario en vivo, reservas, carreras, simulador interno, ráfagas contra el rate limit |
+| http://localhost:3000/api | La API REST (detalle en [docs/API.md](docs/API.md)) |
 
----
+Apagar: `podman compose down` (agregar `-v` para borrar también la base).
 
-## API
+Cuentas demo: `demo@coworking.demo` / `Demo1234!` y `admin@coworking.demo` / `Admin1234!`.
 
-| Método | Ruta | Descripción | Acceso |
-|---|---|---|---|
-| `GET` | `/health` | Estado del servicio | Público |
-| `POST` | `/api/users/register` | Registro de usuario | Público |
-| `POST` | `/api/users/login` | Autenticación, devuelve `{ user, token }` | Público |
-| `GET` | `/api/users/me` | Perfil del usuario autenticado | Autenticado |
-| `GET` | `/api/users/:id` | Consultar usuario | Público |
-| `POST` | `/api/users/:id/balance` | Añadir saldo | Dueño o ADMIN |
-| `POST` | `/api/rooms` | Crear sala | ADMIN |
-| `GET` | `/api/rooms` | Listar salas | Público |
-| `GET` | `/api/rooms/:id` | Consultar sala | Público |
-| `POST` | `/api/rooms/:id/check-availability` | Comprobar disponibilidad | Público |
-| `POST` | `/api/reservations` | Crear reserva (acepta `X-Idempotency-Key`) | Autenticado |
-| `GET` | `/api/users/:userId/reservations` | Reservas de un usuario | Dueño o ADMIN |
-| `PATCH` | `/api/reservations/:id/status` | Avanzar estado (`IN_PROGRESS`/`COMPLETED`) | ADMIN |
-| `DELETE` | `/api/reservations/:id` | Cancelar reserva | Autenticado |
-| `POST` | `/api/users/logout` | Revocar el token actual | Autenticado |
+## Qué muestra el monitor
 
-### Autenticación y autorización (HU-09)
+Todo con datos reales, una muestra por segundo:
 
-El login devuelve un JWT (`Authorization: Bearer <token>`, expira en 1h) que
-las rutas protegidas exigen. Hay dos niveles de autorización, además de la
-autenticación simple:
+- **Núcleos de la CPU**: cada núcleo físico con sus núcleos lógicos. Los que
+  tienen dos son *hyperthreading* (en un i5-1335U: 2 núcleos P con HT + 8 E = 12 lógicos).
+- **Worker threads**: ocupación de cada hilo del pool que calcula bcrypt, y
+  botones para cambiar el tamaño del pool en caliente.
+- **Tráfico**: peticiones admitidas, **rechazadas con 429** y errores 5xx por segundo; peticiones en vuelo.
+- **Hilo principal**: ocupación del event loop y su demora.
+- **Servidor**: hilos del sistema operativo del proceso, CPU y memoria del
+  contenedor (cgroup), y PostgreSQL (transacciones confirmadas y revertidas,
+  conexiones activas o esperando un bloqueo, aciertos de caché).
 
-- **Por rol** (RBAC): `POST /api/rooms` exige rol `ADMIN` → 403 si no lo tiene.
-- **Por propiedad del recurso**: `POST /api/users/:id/balance` y
-  `GET /api/users/:userId/reservations` exigen ser el dueño del recurso o
-  `ADMIN` → 403 si un usuario intenta acceder a datos de otro.
+## Qué construimos
 
-Sin token, o con uno inválido/expirado, cualquier ruta protegida responde 401.
+| Pieza | Dónde |
+| --- | --- |
+| Reservas sin carreras: transacción + restricción de exclusión + débito condicional | `src/services/ReservationService.ts`, `prisma/` |
+| Límite de tasa por IP (300/min general, 20/min login y registro), con `Retry-After` | `src/middleware/rateLimiter.ts` |
+| Pool de worker threads para bcrypt, redimensionable en caliente con cola propia | `src/workers/` |
+| Botones de carga: el monitor le pide escenarios al simulador (servidor de control) | `src/app.ts`, `public/monitor/`, `escenarios.sh` |
+| Monitor integrado: muestreo, cálculos, PostgreSQL, SSE y tablero | `src/monitor/`, `src/metrics/runtime.ts`, `public/monitor/` |
+| Simulador de tráfico: escalones de carga, mezcla de logins, una IP por usuario, admitidas contra rechazadas | repo `coworking-traffic-sim` |
+| Pruebas de concurrencia y rate limit desde el consumidor | `coworking-traffic-sim/src/e2e/` |
+
+### Optimizaciones
+
+- **bcrypt fuera del hilo principal**: con 12 hilos en vez de los 4 de libuv,
+  bajo la misma carga el p99 del login bajó de 918 ms a 310 ms y la peor demora
+  del event loop de 198 ms a 55 ms (una corrida de 40 s por configuración, en
+  una laptop con otros procesos).
+- **Pool precalentado y de tamaño fijo**: sin costo de arranque en la primera ráfaga.
+- **Un solo muestreador por proceso**: el costo del monitor no crece con las
+  pestañas abiertas; si la base tarda, se salta un turno en vez de apilar consultas.
+- **Monitor fuera de `/api`**: no lo frena el rate limit y su tráfico no se cuenta.
+
+## Escenarios de carga
+
+Los cuatro escenarios están como botones en el monitor y también por consola
+(`escenarios.sh` hace lo mismo que los botones, con `curl`):
+
+| Escenario | Qué hace | Qué se ve |
+| --- | --- | --- |
+| Carga baja | 2 sesiones/s, 1 min | todo admitido, CPU casi en reposo |
+| Carga creciente | escalones 2 → 5 → 10 → 20 → 40 → 80 sesiones/s, 3 min | la presión sube por escalones: tráfico, CPU, event loop, transacciones |
+| Saturación de CPU | 60 logins/s (configurable), 2 min | cada login es un bcrypt en un worker thread: cola, hilos y núcleos al máximo |
+| Rate limit | 20 sesiones/s desde UNA sola IP, 1 min | la mayoría de las peticiones recibe 429 |
 
 ```bash
-# 1. Registro e inicio de sesión
-curl -X POST http://localhost:3000/api/users/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"carla@example.com","name":"Carla","password":"SecurePass123!"}'
-
-TOKEN=$(curl -s -X POST http://localhost:3000/api/users/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"carla@example.com","password":"SecurePass123!"}' | jq -r .token)
-
-# 2. Ruta protegida por autenticación
-curl http://localhost:3000/api/users/me -H "Authorization: Bearer $TOKEN"
-
-# 3. Ruta protegida por rol (falla con 403 si no es ADMIN)
-curl -X POST http://localhost:3000/api/rooms \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"name":"Sala Premium","capacity":8,"hourlyRate":150}'
-
-# 4. Ruta protegida por propiedad del recurso (falla con 403 sobre otro id)
-curl http://localhost:3000/api/users/999/reservations -H "Authorization: Bearer $TOKEN"
+./escenarios.sh creciente        # o: baja · saturacion 60 · rate-limit
+./escenarios.sh estado
+./escenarios.sh detener
 ```
 
-Como el registro público siempre asigna rol `USER`, un usuario `ADMIN` de
-prueba se crea directamente en la base de datos (o en el repositorio en
-memoria, como hace `MundoCoworking.asegurarAdministrador()` en las pruebas
-BDD): no hay endpoint para autopromoverse.
+Una corrida a medida, sin botones: `podman compose run --rm sim run -d 1m -r 30 -u 25`
+(opciones en el README del simulador).
 
-### Validación, saneamiento y logs seguros (HU-10)
+**De 1 hilo a muchos, en caliente.** El monitor tiene botones de *Hilos*
+(libuv, 1, 2, 4, 6, 12). Durante `saturacion`, empezar en 1 y pasar a 12:
 
-Cada endpoint que escribe datos pasa por `validateRequest(schema)`
-(`src/middleware/validateRequest.ts`) antes de llegar al controlador: un
-esquema Zod (`src/validation/schemas.ts`) rechaza campos no declarados y
-tipos incorrectos con 400, y sanea texto libre (`trim`). Las reglas de
-negocio (formato de email, fuerza de contraseña, capacidad positiva...)
-siguen viviendo en los servicios; Zod solo valida la forma del body en el
-borde HTTP.
+| Medido (60 logins/s, i5-1335U) | 1 hilo | primeros 5 s con 12 | resto con 12 |
+| --- | --- | --- | --- |
+| Cola de logins (media) | 440 | se vacía | 102 |
+| Hashes por segundo | 19 | 151 | 74 |
+| CPU de la API | 1,1 núcleos | 9,3 núcleos | 8,7 núcleos |
 
-```bash
-# Campo no declarado en el esquema -> 400
-curl -X POST http://localhost:3000/api/users/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"x@example.com","name":"X","password":"SecurePass123!","role":"ADMIN"}'
+Con 1 hilo la cola crece y muchos logins superan el timeout de 10 s del
+simulador. Con 12 la cola se vacía en segundos y se encienden casi todos los
+núcleos. A 60 logins/s, 12 hilos también quedan al límite: el simulador,
+PostgreSQL y la API comparten la misma máquina.
 
-# El nombre se guarda sin los espacios extra
-curl -X POST http://localhost:3000/api/users/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"y@example.com","name":"   Marta   ","password":"SecurePass123!"}'
-```
+**IPs virtuales.** El simulador manda una IP por usuario en `X-Forwarded-For`
+y la API la usa para el rate limit (`TRUST_PROXY=true`, activo en este compose
+de demostración; en producción, solo detrás de un proxy de confianza). Así el
+límite frena a quien se excede y no a todo el simulador junto. Con
+`rate-limit` se ve lo contrario: todos desde una IP.
 
-**Inyección SQL/NoSQL:** no aplica a este sistema. Todo el acceso a datos
-pasa por Prisma (`src/repositories/PrismaRepositories.ts`), que parametriza
-las consultas; no hay ni una sola concatenación de SQL en el código.
+**Reparto de carga.** piscina entrega cada tarea a un hilo libre (barras de
+*Worker threads*) y el sistema operativo reparte esos hilos entre los núcleos
+(cuadrícula de *Núcleos*).
 
-**Logs seguros:** un error inesperado (500) se registra con
-`src/logger.ts` (Pino), que censura `authorization`, `password` y `token`
-antes de escribir el log (`redact`). Antes de este cambio, `errorHandler`
-volcaba `req.body`/`req.headers` con `console.error`, texto plano incluido.
-Verificado en `tests/unit/logger.test.ts`.
+Para cambiar variables de la API (`RATE_LIMIT_*`, `BCRYPT_ROUNDS`…) hay que
+recrear los contenedores: `podman compose down && podman compose up -d`.
+Con podman-compose 1.0.6, `--force-recreate` sobre un solo servicio falla en
+silencio porque `sim` depende de `api`.
 
-### Estados, idempotencia y logout (HU-11, Unidad 5)
+## Pruebas
 
-Una reserva nace `CONFIRMED` (se paga al reservar) y solo puede avanzar en
-un sentido: `CONFIRMED` → `IN_PROGRESS` → `COMPLETED`. Cualquier otra
-transición (saltarse un paso, retroceder, avanzar una ya cancelada) se
-rechaza con 409. Cancelar sigue siendo el camino de HU-06, sin cambios.
+| Repositorio | Comando | Qué cubre |
+| --- | --- | --- |
+| proyectoXP | `npm test` · `npm run test:api` · `npm run test:e2e` | Unitarias (Jest), API por HTTP, escenarios BDD (Cucumber) |
+| coworking-traffic-sim | `npm test` | Unitarias y de componente (Vitest + fast-check) |
+| coworking-traffic-sim | `npm run test:e2e` | Contra la API real: carreras, idempotencia, saldo y rate limit |
 
-```bash
-# Salta un paso -> 409
-curl -X PATCH http://localhost:3000/api/reservations/1/status \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_ADMIN" \
-  -d '{"status":"COMPLETED"}'
-```
+Seguimos [javascript-testing-best-practices](https://github.com/sinaptek/javascript-testing-best-practices/blob/master/readme-es.md):
+nombres en tres partes, patrón AAA, caja negra, datos realistas, pruebas por propiedades y sin datos compartidos entre pruebas.
 
-`POST /api/reservations` acepta una cabecera `X-Idempotency-Key` opcional:
-repetir la misma clave devuelve la reserva creada la primera vez (mismo id,
-sin cobrar ni reservar de nuevo), en vez de procesar la petición otra vez.
+### Defectos conocidos
 
-```bash
-curl -X POST http://localhost:3000/api/reservations \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -H "X-Idempotency-Key: reserva-del-cliente-123" \
-  -d '{"userId":1,"roomId":1,"startDate":"...","endDate":"..."}'
-# Repetir la misma petición con la misma clave -> mismo id, un solo cobro
-```
+Las pruebas del simulador (`src/e2e/hallazgos.e2e.test.ts`) documentan dos defectos de la API todavía sin corregir:
 
-`POST /api/users/logout` revoca el token actual: un JWT firmado no se puede
-"borrar", así que se guarda su `jti` en una lista negra
-(`RevokedToken`/`revoked_tokens`) hasta su expiración natural; `authenticate`
-la consulta en cada petición. Tras el logout, ese mismo token responde 401
-aunque su firma siga siendo válida.
+1. `POST /api/reservations` usa el `userId` del body sin compararlo con el del token: un usuario puede reservar cobrándole a otro.
+2. Las claves `X-Idempotency-Key` son globales: otro usuario que repite una clave recibe la reserva ajena.
 
----
+## Más documentación
 
-## Justificación de las decisiones XP
-
-### Ciclo TDD/BDD (Rojo → Verde → Refactor)
-
-Los criterios de aceptación del backlog se escribieron primero como escenarios
-Gherkin en `features/`. Cada escenario falló antes de existir la lógica
-correspondiente, y el código de producción se añadió únicamente para hacerlos
-pasar. Las reglas que no tenían prueba —cancelar una reserva ya iniciada,
-validación de entradas, registro de intentos fallidos— se cubrieron con un
-escenario o un test unitario **antes** de implementarlas.
-
-### Diseño simple (KISS / YAGNI)
-
-- La bitácora de intentos fallidos es una lista en memoria, no una tabla de
-  auditoría: cumple el criterio de aceptación sin inventar requisitos.
-- El `UnitOfWork` existe porque reservar toca dos entidades a la vez, no como
-  abstracción preventiva.
-- JWT (HU-09) se añadió cuando la historia lo pidió, no antes: `TokenService`
-  solo firma/verifica el payload que le pasan, sin sesiones ni refresh tokens
-  que nadie ha pedido todavía.
-- Sin cookies de sesión (HttpOnly/Secure/SameSite): el sistema ya es
-  stateless con JWT en el header `Authorization`, así que añadirlas
-  duplicaría un mecanismo que nadie usa.
-- Sin bloqueo optimista con número de versión (HU-11): el solapamiento de
-  reservas ya se comprueba dentro de una transacción (`findOverlapping` +
-  `create` en el mismo `$transaction`), que es la garantía que pide la
-  historia; una columna de versión no aporta nada que eso no cubra ya.
-- La idempotencia (HU-11) es "consultar, y si no existe, crear y guardar la
-  clave" (sin manejo de conflicto de escritura concurrente): ninguna
-  historia pide todavía servir dos peticiones simultáneas con la misma
-  clave, y la restricción `@id` en `idempotency_keys` ya deja la puerta
-  abierta a añadirlo el día que haga falta.
-
-### Refactorización continua
-
-Sobre la primera versión funcional se aplicaron estas mejoras sin cambiar el
-comportamiento observable:
-
-- **Capa de repositorios.** Los servicios llamaban a Prisma directamente. Ahora
-  dependen de interfaces (`IUserRepository`, …), con dos implementaciones: una
-  sobre Prisma y otra en memoria. La suite BDD dejó de necesitar PostgreSQL.
-- **Inyección de dependencias.** Los servicios se instanciaban como singletons
-  dentro de cada módulo. Ahora se construyen en `container.ts`, lo que permite
-  que las pruebas inyecten el almacén en memoria.
-- **Errores tipados.** El middleware deducía el código HTTP con
-  `err.message.includes('not found')`. Ahora cada error de dominio
-  (`NotFoundError`, `ConflictError`, …) lleva su propio `statusCode`, así que
-  cambiar la redacción de un mensaje ya no altera la respuesta.
-- **Tipado estricto real.** `tsconfig.json` tenía `strict: false` y `src/db.ts`
-  exportaba el cliente como `any`, de modo que los tipos no fluían. Con
-  `strict: true` y el cliente Prisma tipado, el compilador detectó varios
-  errores latentes en los controladores.
-- **World único en Cucumber.** Cada fichero de pasos mantenía su propio estado
-  a nivel de módulo, compartido entre escenarios, y tres pasos estaban
-  duplicados en varios ficheros (Cucumber aborta la suite en ese caso). Ahora
-  hay un `World` por escenario y los pasos comunes viven en `common.steps.ts`.
-
-### Integración continua
-
-`.github/workflows/main.yml` ejecuta en cada *push* y *pull request*: linter →
-compilación estricta → pruebas unitarias con umbral de cobertura → pruebas BDD
-→ build. Cualquier fallo bloquea la integración.
-
----
-
-## Estado de las pruebas
-
-```
-Cucumber:  49 escenarios · 278 pasos · 49 passed
-Jest:      8 suites ·  81 tests  ·  81 passed · 91,8 % statements
-```
-
-Hay **una feature por cada historia del backlog** (6 funcionales + 5 técnicas),
-cada una con su camino feliz y al menos un caso de error o límite:
-
-| Feature | Historia |
-|---|---|
-| `01-registro-usuarios.feature` | HU-01 Registro e identificación |
-| `02-gestion-balance.feature` | HU-02 Gestión de balance |
-| `03-reserva-salas.feature` | HU-03 Reserva de salas |
-| `04-visualizacion-reservas.feature` | HU-04 Visualización de reservas |
-| `05-gestion-salas.feature` | HU-05 Gestión de salas |
-| `06-cancelacion-reservas.feature` | HU-06 Cancelación de reservas |
-| `07-rendimiento-api.feature` | HU-07 Rendimiento (técnica) |
-| `08-seguridad-datos.feature` | HU-08 Seguridad (técnica) |
-| `09-autenticacion-jwt.feature` | HU-09 Autenticación y autorización JWT (técnica) |
-| `10-sanitizacion-validacion.feature` | HU-10 Saneamiento y validación de entradas (técnica) |
-| `11-sesiones-estados.feature` | HU-11 Gestión de sesiones y estados (técnica) |
-
-Los escenarios están redactados en español, siguiendo el ejemplo del propio
-`progXP.pdf` (palabras clave Gherkin en inglés, texto de la historia en
-español). Los mensajes de error se comparan en inglés porque forman parte del
-contrato de la API REST.
+- [docs/API.md](docs/API.md): endpoints, decisiones XP, contenedor y estado de las pruebas.
+- [PRODUCT_BACKLOG.md](PRODUCT_BACKLOG.md) · [docs/guion-presentacion.md](docs/guion-presentacion.md) · [docs/plan-hu12/](docs/plan-hu12/)

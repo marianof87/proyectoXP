@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitor de recursos</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f9f9f7;
+      --surface-1: #fcfcfb;
+      --text-primary: #0b0b0b;
+      --text-secondary: #52514e;
+      --muted: #898781;
+      --grid: #e1e0d9;
+      --axis: #c3c2b7;
+      --border: rgba(11, 11, 11, 0.10);
+      --series-1: #2a78d6;
+      --series-2: #eb6834;
+      --series-3: #1baf7a;
+      --seq-0: #cde2fb;
+      --seq-fill: #2a78d6;
+      --seq-hot: #104281;
+      --good: #0ca30c;
+      --critical: #d03b3b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:where(:not([data-theme="light"])) {
+        color-scheme: dark;
+        --page: #0d0d0d;
+        --surface-1: #1a1a19;
+        --text-primary: #f0efec;
+        --text-secondary: #c3c2b7;
+        --grid: #2c2c2a;
+        --axis: #383835;
+        --border: rgba(255, 255, 255, 0.10);
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --series-3: #199e70;
+        --seq-0: #1f2a38;
+        --seq-fill: #3987e5;
+        --seq-hot: #9ec5f4;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --seq-0: #1f2a38;
+      --seq-fill: #3987e5;
+      --seq-hot: #9ec5f4;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text-primary);
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+    header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+    h1 { font-size: 20px; margin: 0; font-weight: 650; }
+    h2 { font-size: 15px; margin: 0 0 2px; font-weight: 620; }
+    .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 12px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+    .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .status[data-ok="true"]::before { background: var(--good); }
+    .status[data-ok="false"]::before { background: var(--critical); }
+    .spacer { flex: 1; }
+    .back { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
+    .back:hover { color: var(--series-1); }
+    h3 { font-size: 13px; font-weight: 620; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; margin: 22px 0 10px; }
+    button {
+      font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface-1);
+      border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer;
+    }
+    button[aria-pressed="true"] { border-color: var(--series-1); color: var(--series-1); }
+    .info { color: var(--text-secondary); font-size: 13px; margin: 6px 0 18px; }
+    .info b { color: var(--text-primary); font-weight: 600; }
+
+    .card {
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; min-width: 0;
+    }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .tile .label { color: var(--text-secondary); font-size: 12.5px; }
+    .tile .value { font-size: 26px; font-weight: 650; margin-top: 2px; }
+    .tile .unit { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+    .tile .hint { color: var(--muted); font-size: 12px; }
+
+    .row { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; margin-bottom: 14px; }
+    @media (max-width: 860px) { .row { grid-template-columns: 1fr; } }
+
+    .cores { display: flex; flex-wrap: wrap; gap: 8px; }
+    .core {
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .core[data-ht="true"] { border-color: var(--series-1); }
+    .core .name { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
+    .core .lps { display: flex; gap: 4px; }
+    .lp {
+      position: relative; width: 44px; height: 64px; border-radius: 4px; background: var(--seq-0); overflow: hidden;
+    }
+    .lp .fill {
+      position: absolute; left: 0; right: 0; bottom: 0; background: var(--seq-fill);
+      border-radius: 4px 4px 0 0; transition: height .4s ease;
+    }
+    .lp .pct, .lp .id {
+      position: absolute; left: 0; right: 0; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums;
+    }
+    .lp .id { top: 3px; color: var(--text-secondary); }
+    .lp .pct { bottom: 3px; font-weight: 600; color: var(--text-primary); }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--text-secondary); margin: 8px 0 0; }
+    .legend span::before {
+      content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px;
+      vertical-align: -1px; background: var(--swatch);
+    }
+
+    .loadgen { margin-bottom: 6px; }
+    .lg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+    .lg-state { font-size: 13px; color: var(--text-secondary); }
+    .lg-buttons { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+    .lg-btn {
+      text-align: left; padding: 10px 12px; border-radius: 8px; display: flex; flex-direction: column; gap: 3px;
+    }
+    .lg-btn strong { font-size: 14px; color: var(--text-primary); }
+    .lg-btn span { font-size: 12px; color: var(--text-secondary); line-height: 1.35; }
+    .lg-btn:not(:disabled):hover { border-color: var(--series-1); }
+    .lg-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .lg-btn[data-active="true"] { border-color: var(--series-1); box-shadow: inset 0 0 0 1px var(--series-1); opacity: 1; }
+    .lg-rate { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+    .lg-rate input { width: 64px; font: inherit; padding: 2px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-1); color: var(--text-primary); }
+    .lg-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+    .lg-bar { flex: 1 1 200px; height: 8px; border-radius: 4px; background: var(--seq-0); overflow: hidden; }
+    .lg-fill { height: 100%; width: 0; background: var(--series-1); transition: width .5s linear; }
+    button.danger { color: var(--critical); border-color: var(--critical); }
+    .lg-last { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
+    .pool-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+    .pool-ctl #poolCtl { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+    .pool-ctl button { padding: 2px 9px; }
+    .ctl-msg { color: var(--muted); font-size: 12px; }
+    .threads { display: flex; align-items: flex-end; gap: 2px; height: 140px; padding-top: 6px; }
+    .thread { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+    .thread .bar { width: 100%; max-width: 36px; background: var(--series-1); border-radius: 4px 4px 0 0; min-height: 1px; transition: height .4s ease; }
+    .thread .tid { font-size: 10.5px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+    @media (max-width: 440px) { .charts { grid-template-columns: 1fr; } }
+    .chart { position: relative; }
+    .chart svg { display: block; width: 100%; height: 190px; overflow: visible; }
+    .chart .gridline { stroke: var(--grid); stroke-width: 1; }
+    .chart .baseline { stroke: var(--axis); stroke-width: 1; }
+    .chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    .chart .end-label { font-size: 11.5px; fill: var(--text-secondary); }
+    .chart .cross { stroke: var(--axis); stroke-width: 1; }
+    .chart .dot { stroke: var(--surface-1); stroke-width: 2; }
+    .tooltip {
+      position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.12);
+      white-space: nowrap; z-index: 2;
+    }
+    .tooltip .t { color: var(--muted); margin-bottom: 2px; }
+    .tooltip .r { display: flex; gap: 8px; justify-content: space-between; }
+    .tooltip .r span:first-child::before {
+      content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--swatch);
+    }
+    .tooltip .r span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--text-secondary); font-weight: 600; }
+    .table-wrap { overflow-x: auto; margin-top: 14px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <a class="back" href="/">← Panel</a>
+    <h1>Monitor de recursos · proyectoXP</h1>
+    <span class="status" id="status">conectando…</span>
+    <span class="spacer"></span>
+    <button id="win60" aria-pressed="true">Último minuto</button>
+    <button id="win300" aria-pressed="false">5 minutos</button>
+    <button id="toggleTable" aria-pressed="false">Ver tabla</button>
+  </header>
+  <p class="info" id="info">Esperando la primera lectura de /metrics/runtime…</p>
+
+  <section class="card loadgen" aria-labelledby="lgTitle">
+    <div class="lg-head">
+      <h2 id="lgTitle">Generador de carga · coworking-traffic-sim</h2>
+      <span class="lg-state" id="lgState">consultando…</span>
+    </div>
+    <p class="sub">Cada botón le pide al simulador (otro contenedor) que corra un escenario contra esta API. La presión aparece abajo en vivo.</p>
+    <div class="lg-buttons" id="lgButtons"></div>
+    <div class="lg-progress" id="lgProgress" hidden>
+      <div class="lg-bar"><div class="lg-fill" id="lgFill"></div></div>
+      <span id="lgDetail"></span>
+      <button id="lgStop" class="danger">■ Detener</button>
+    </div>
+    <p class="lg-last" id="lgLast"></p>
+  </section>
+
+  <h3>Tráfico y concurrencia</h3>
+  <section class="tiles" aria-label="Valores actuales">
+    <div class="card tile"><div class="label">Admitidas</div><div class="value"><span id="vAdmitted">–</span><span class="unit">pet/s</span></div><div class="hint">pasaron el rate limit</div></div>
+    <div class="card tile"><div class="label">Rechazadas (429)</div><div class="value"><span id="vLimited">–</span><span class="unit">pet/s</span></div><div class="hint">cortadas por el rate limit</div></div>
+    <div class="card tile"><div class="label">En vuelo</div><div class="value"><span id="vInFlight">–</span></div><div class="hint">peticiones concurrentes</div></div>
+    <div class="card tile"><div class="label">CPU de la API</div><div class="value"><span id="vCores">–</span><span class="unit">núcleos</span></div><div class="hint" id="vCpuPct">–</div></div>
+    <div class="card tile"><div class="label">Hilo principal</div><div class="value"><span id="vLoop">–</span><span class="unit">% ocupado</span></div><div class="hint" id="vLag">–</div></div>
+    <div class="card tile"><div class="label">Cola del pool</div><div class="value"><span id="vQueue">–</span><span class="unit">tareas</span></div><div class="hint" id="vDone">–</div></div>
+  </section>
+
+  <h3>Servidor</h3>
+  <section class="tiles" aria-label="Recursos del servidor">
+    <div class="card tile"><div class="label">Hilos del sistema operativo</div><div class="value"><span id="vOsThreads">–</span><span class="unit">hilos</span></div><div class="hint">principal + workers + libuv + V8 + Prisma</div></div>
+    <div class="card tile"><div class="label">Contenedor de la API</div><div class="value"><span id="vCtMem">–</span><span class="unit">MB</span></div><div class="hint" id="vCtHint">–</div></div>
+    <div class="card tile"><div class="label">PostgreSQL</div><div class="value"><span id="vTps">–</span><span class="unit">transacciones/s</span></div><div class="hint" id="vDbHint">–</div></div>
+    <div class="card tile"><div class="label">Conexiones a la base</div><div class="value"><span id="vConn">–</span><span class="unit">activas</span></div><div class="hint" id="vConnHint">–</div></div>
+  </section>
+
+  <h3>CPU e hilos</h3>
+  <section class="row">
+    <div class="card">
+      <h2>Núcleos de CPU de la máquina</h2>
+      <p class="sub">Cada recuadro es un núcleo físico; adentro, sus núcleos lógicos. Los recuadros con dos lógicos (borde azul) tienen hyperthreading. El relleno es el % de uso en el último segundo.</p>
+      <div class="cores" id="cores"><div class="empty">Sin datos todavía</div></div>
+    </div>
+    <div class="card">
+      <h2 id="poolTitle">Worker threads del pool</h2>
+      <p class="sub" id="poolSub">% del último segundo que cada hilo estuvo trabajando.</p>
+      <div class="pool-ctl" role="group" aria-label="Tamaño del pool de hilos">
+        <span>Hilos:</span><span id="poolCtl"></span><span class="ctl-msg" id="poolMsg"></span>
+      </div>
+      <div class="threads" id="threads"><div class="empty">Sin datos todavía</div></div>
+    </div>
+  </section>
+
+  <h3>En el tiempo</h3>
+  <section class="charts" id="charts"></section>
+
+  <section class="card table-wrap" id="tableWrap" hidden>
+    <h2>Últimas 30 muestras</h2>
+    <table>
+      <thead><tr>
+        <th>Hora</th><th>Admitidas/s</th><th>429/s</th><th>5xx/s</th><th>En vuelo</th>
+        <th>CPU máquina %</th><th>CPU API %</th><th>Event loop %</th><th>Lag p99 ms</th><th>Pool %</th><th>Cola</th>
+        <th>Hilos SO</th><th>Commits/s</th><th>Rollbacks/s</th><th>Conex. activas</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

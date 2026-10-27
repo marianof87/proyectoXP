@@ -1,6 +1,7 @@
-import express, { Router } from 'express';
+import express, { RequestHandler, Router } from 'express';
 
 import { Services } from '../container';
+import { LiveController } from '../controllers/LiveController';
 import { ReservationController } from '../controllers/ReservationController';
 import { RoomController } from '../controllers/RoomController';
 import { UserController } from '../controllers/UserController';
@@ -9,7 +10,9 @@ import {
   requireOwnerOrAdmin,
   requireRole,
 } from '../middleware/authMiddleware';
+import { createRateLimiter, RateLimitConfig } from '../middleware/rateLimiter';
 import { validateRequest } from '../middleware/validateRequest';
+import { Simulator } from '../sim/Simulator';
 import {
   addBalanceSchema,
   advanceReservationStatusSchema,
@@ -18,11 +21,30 @@ import {
   createRoomSchema,
   loginSchema,
   registerSchema,
+  autoSimulationSchema,
+  simulationSchema,
 } from '../validation/schemas';
 
 /** Monta las rutas sobre los servicios recibidos (sin singletons globales). */
-export const createRouter = (services: Services): Router => {
+export interface RouterOptions {
+  /** Límites de tasa; sin él no se limita (pruebas). */
+  rateLimit?: RateLimitConfig;
+  /** HU-12: habilita POST /api/sim/run. Apagado por defecto. */
+  enableSimulator?: boolean;
+}
+
+export const createRouter = (
+  services: Services,
+  options: RouterOptions = {}
+): Router => {
   const router: Router = express.Router();
+
+  if (options.rateLimit) {
+    router.use(createRateLimiter(options.rateLimit.general));
+  }
+  const authLimiter: RequestHandler[] = options.rateLimit
+    ? [createRateLimiter(options.rateLimit.auth)]
+    : [];
 
   const users = new UserController(
     services.userService,
@@ -35,8 +57,19 @@ export const createRouter = (services: Services): Router => {
   const auth = authenticate(services.tokenService, services.sessionService);
 
   // Usuarios - públicas
-  router.post('/users/register', validateRequest(registerSchema), users.register);
-  router.post('/users/login', validateRequest(loginSchema), users.login);
+  // Con límite propio, más estricto: frena la fuerza bruta (HU-08).
+  router.post(
+    '/users/register',
+    ...authLimiter,
+    validateRequest(registerSchema),
+    users.register
+  );
+  router.post(
+    '/users/login',
+    ...authLimiter,
+    validateRequest(loginSchema),
+    users.login
+  );
 
   // Usuarios - protegidas (HU-09). "/users/me" va antes de "/users/:id":
   // Express resuelve las rutas en orden de registro, así que si "/:id" fuera
@@ -91,6 +124,40 @@ export const createRouter = (services: Services): Router => {
     validateRequest(advanceReservationStatusSchema),
     reservations.advanceStatus
   );
+
+  // HU-12: calendario público, eventos en vivo y simulador.
+  const live = new LiveController(
+    services.reservationService,
+    services.events,
+    new Simulator(services)
+  );
+  router.get('/reservations', live.calendar);
+  router.get('/events', live.stream);
+  if (options.enableSimulator) {
+    router.post(
+      '/sim/run',
+      (req, _res, next) => {
+        // Cuerpo vacío = parámetros por defecto.
+        req.body ??= {};
+        next();
+      },
+      validateRequest(simulationSchema),
+      live.simulate
+    );
+    // Tráfico continuo, estado y reinicio del calendario de demostración.
+    router.post(
+      '/sim/auto',
+      (req, _res, next) => {
+        req.body ??= {};
+        next();
+      },
+      validateRequest(autoSimulationSchema),
+      live.autoStart
+    );
+    router.post('/sim/auto/stop', live.autoStop);
+    router.get('/sim/auto', live.autoStatus);
+    router.post('/sim/reset', live.reset);
+  }
 
   return router;
 };

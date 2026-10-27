@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coworking · Panel de control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Navegación">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">◧</span>
+        <div><strong>Coworking</strong><small>Panel de control</small></div>
+      </div>
+      <nav>
+        <a href="#live" data-nav="live"><i aria-hidden="true">◉</i>En vivo</a>
+        <a href="#session" data-nav="session"><i aria-hidden="true">☺</i>Sesión</a>
+        <a href="#book" data-nav="book"><i aria-hidden="true">▦</i>Reservas</a>
+        <a href="#sim" data-nav="sim"><i aria-hidden="true">⚡</i>Simulador</a>
+        <a href="#rate" data-nav="rate"><i aria-hidden="true">⏱</i>Límite de tasa</a>
+        <a href="#raw" data-nav="raw"><i aria-hidden="true">⌨</i>Petición libre</a>
+        <a href="#console" data-nav="console"><i aria-hidden="true">▤</i>Consola</a>
+        <a href="/monitor/"><i aria-hidden="true">▥</i>Monitor de recursos</a>
+      </nav>
+      <div class="side-foot">
+        <span id="live-dot" class="dot" aria-hidden="true"></span>
+        <span id="live-text">Conectando…</span>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button id="menu" class="icon" aria-label="Abrir menú" aria-controls="sidebar">☰</button>
+        <h1 id="view-title">En vivo</h1>
+        <span id="who" class="chip">Sin sesión</span>
+      </header>
+
+      <main>
+        <!-- ===== EN VIVO ===== -->
+        <section class="view" data-view="live" aria-labelledby="view-title">
+          <div class="card present">
+            <div class="row between wrap">
+              <div>
+                <h2>Modo presentación</h2>
+                <p class="hint">Todo corre solo contra la base de datos real. Sin comandos.</p>
+              </div>
+              <div class="row wrap">
+                <button id="btn-demo" class="primary big">▶ Demo guiada (≈70 s)</button>
+                <button id="btn-auto" class="primary">▶ Tráfico en vivo</button>
+                <label class="inline">Peticiones/seg
+                  <select id="auto-rate"><option>1</option><option selected>3</option><option>6</option><option>10</option><option>20</option></select>
+                </label>
+                <button id="btn-stop">■ Detener</button>
+                <button id="btn-burst" title="300 operaciones, 50 a la vez">⚡ Ráfaga</button>
+                <button id="btn-reset" class="ghost">🧹 Vaciar</button>
+              </div>
+            </div>
+            <p id="narration" class="narration" aria-live="polite">Pulsa «Demo guiada»: tráfico real, carreras entre reservas y límite de tasa, narrado paso a paso.</p>
+            <div class="tiles">
+              <div class="tile"><b id="t-inflight">0</b><span>En vuelo ahora</span></div>
+              <div class="tile"><b id="t-peak">0</b><span>Pico simultáneo</span></div>
+              <div class="tile ok"><b id="t-created">0</b><span>Creadas</span></div>
+              <div class="tile"><b id="t-cancelled">0</b><span>Canceladas</span></div>
+              <div class="tile"><b id="t-status">0</b><span>Cambios de estado</span></div>
+              <div class="tile bad"><b id="t-conflict">0</b><span>Rechazadas: horario</span></div>
+              <div class="tile warn"><b id="t-balance">0</b><span>Rechazadas: saldo</span></div>
+              <div class="tile"><b id="t-rate">0</b><span>Eventos / seg</span></div>
+            </div>
+          </div>
+
+          <div class="split">
+            <div class="card calendar">
+              <div class="row between wrap">
+                <h2>Calendario en vivo</h2>
+                <div class="row">
+                  <button id="day-prev" aria-label="Día anterior">‹</button>
+                  <input id="day" type="date" aria-label="Día mostrado (UTC)">
+                  <button id="day-next" aria-label="Día siguiente">›</button>
+                </div>
+              </div>
+              <div class="legend">
+                <span class="sw s-CONFIRMED"></span>Confirmada
+                <span class="sw s-IN_PROGRESS"></span>En curso
+                <span class="sw s-COMPLETED"></span>Completada
+                <span class="sw s-CANCELLED"></span>Cancelada
+                <span class="sw rej-sw"></span>Rechazada
+              </div>
+              <div class="grid-wrap"><table id="grid" aria-label="Reservas por sala y hora (UTC)"></table></div>
+            </div>
+            <div class="card feed">
+              <h2>Actividad en vivo</h2>
+              <ul id="feed" class="list" aria-live="off"></ul>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== SESIÓN ===== -->
+        <section class="view" data-view="session" hidden>
+          <div class="card narrow">
+            <h2>Iniciar sesión o registrarse</h2>
+            <p id="ses-status" class="statusline" aria-live="polite">Sin sesión iniciada.</p>
+            <label>Email <input id="email" type="email" autocomplete="username" value="demo@coworking.demo"></label>
+            <label>Contraseña <input id="password" type="password" autocomplete="current-password" value="Demo1234!"></label>
+            <label>Nombre (solo para registrar) <input id="name" value="Persona de Prueba"></label>
+            <div class="row wrap">
+              <button id="btn-login" class="primary">Iniciar sesión</button>
+              <button id="btn-register">Registrar</button>
+              <button id="btn-me">Quién soy</button>
+              <button id="btn-logout">Cerrar sesión</button>
+            </div>
+            <div class="row wrap">
+              <button id="fill-user" class="ghost">Cargar cuenta demo</button>
+              <button id="fill-admin" class="ghost">Cargar admin demo</button>
+            </div>
+            <p class="hint">Para registrar una cuenta nueva cambia el email (la demo ya existe).
+              Las cuentas demo existen con <code>ENABLE_SIMULATOR=true</code>.</p>
+          </div>
+        </section>
+
+        <!-- ===== RESERVAS ===== -->
+        <section class="view" data-view="book" hidden>
+          <div class="split even">
+            <div class="card">
+              <h2>Nueva reserva</h2>
+              <label>Sala <select id="room"></select></label>
+              <div class="row">
+                <label>Inicio <input id="start" type="datetime-local"></label>
+                <label>Fin <input id="end" type="datetime-local"></label>
+              </div>
+              <label>Clave de idempotencia (opcional)
+                <input id="idem" placeholder="repetirla = misma reserva, sin cobrar dos veces">
+              </label>
+              <div class="row wrap">
+                <button id="btn-book" class="primary">Reservar</button>
+                <button id="btn-race" title="Mismo horario, 5 peticiones a la vez">Carrera ×5</button>
+                <button id="btn-balance">+50 de saldo</button>
+              </div>
+              <p id="balance" class="statusline"></p>
+            </div>
+            <div class="card">
+              <div class="row between"><h2>Mis reservas</h2><button id="btn-mine">Actualizar</button></div>
+              <ul id="mine" class="list"></ul>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== SIMULADOR ===== -->
+        <section class="view" data-view="sim" hidden>
+          <div class="split even">
+            <div class="card">
+              <h2>Simulación a medida</h2>
+              <p class="hint">Opera sobre el día mostrado en «En vivo».</p>
+              <div class="row">
+                <label>Operaciones <input id="sim-ops" type="number" min="1" max="500" value="100"></label>
+                <label>Concurrencia <input id="sim-conc" type="number" min="1" max="50" value="10"></label>
+              </div>
+              <div class="row">
+                <label>Latencia máx. (ms) <input id="sim-delay" type="number" min="0" max="300" value="120"></label>
+                <label>Semilla <input id="sim-seed" type="number" min="0" placeholder="aleatoria"></label>
+              </div>
+              <button id="btn-sim" class="primary">Lanzar simulación</button>
+            </div>
+            <div class="card">
+              <h2>Resultado</h2>
+              <div id="sim-out" class="result" aria-live="polite"><p class="hint">Aún no hay resultados.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== LÍMITE DE TASA ===== -->
+        <section class="view" data-view="rate" hidden>
+          <div class="card narrow">
+            <h2>Limitación de tasa</h2>
+            <p class="hint">Punto de prueba con tope de 20 peticiones por 10 s; no afecta al resto del panel.</p>
+            <label>Peticiones a la vez <input id="rl-n" type="number" min="1" max="200" value="60"></label>
+            <button id="btn-rl" class="primary">Lanzar ráfaga a /api/sim/rate-test</button>
+            <div id="rl-out" class="result" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <!-- ===== PETICIÓN LIBRE ===== -->
+        <section class="view" data-view="raw" hidden>
+          <div class="card narrow">
+            <h2>Petición libre</h2>
+            <div class="row">
+              <select id="raw-method" aria-label="Método" class="method">
+                <option>GET</option><option>POST</option><option>PATCH</option><option>DELETE</option>
+              </select>
+              <input id="raw-path" value="/api/rooms" aria-label="Ruta">
+            </div>
+            <label>Cuerpo JSON <textarea id="raw-body" rows="4" placeholder='{"status":"IN_PROGRESS"}'></textarea></label>
+            <button id="btn-raw" class="primary">Enviar (con token si hay sesión)</button>
+            <p class="hint">La respuesta aparece en un aviso y en la pestaña «Consola».</p>
+          </div>
+        </section>
+
+        <!-- ===== CONSOLA ===== -->
+        <section class="view" data-view="console" hidden>
+          <div class="card">
+            <div class="row between"><h2>Consola de peticiones</h2><button id="btn-clear" class="ghost">Limpiar</button></div>
+            <pre id="log" aria-live="polite"></pre>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

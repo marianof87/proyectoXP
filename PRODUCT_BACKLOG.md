@@ -190,3 +190,22 @@ Seguridad
 ├── Autorización (por rol y por propiedad del recurso)
 └── Revocación de Sesión (logout)
 ```
+
+## Hoja de ruta (en consideración, no implementado)
+
+- **Despliegue automático:** pendiente de elegir destino (VPS + Watchtower/
+  `podman auto-update`, o Render/Fly.io/Railway a partir del Dockerfile).
+
+## HU-12 Concurrencia, límite de tasa y calendario en vivo (hecho)
+
+- Reservas transaccionales y libres de carreras (Fase 1), simulador
+  (`POST /api/sim/run`), limitación de tasa (429), calendario público + SSE e
+  interfaz web en `public/`. Ver README, sección HU-12, y `docs/plan-hu12/`.
+- Fase 2 hecha: 7 pruebas de concurrencia contra PostgreSQL real
+  (`npm run test:integration`), ejecutadas en CI con un servicio `postgres:16`.
+
+## Entrega en contenedores (hecho)
+
+Dockerfile multi-etapa, `compose.yaml` (API + PostgreSQL con healthchecks),
+migraciones automáticas al arrancar y publicación de la imagen en GHCR vía
+GitHub Actions. Ver sección "Contenedor" del README.

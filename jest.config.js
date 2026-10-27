@@ -1,6 +1,11 @@
 /** Configuracion de Jest para las pruebas unitarias (tests/unit). */
 module.exports = {
-  preset: 'ts-jest',
+  // Transpilación por archivo, sin type-check: los tipos ya los verifica
+  // `npm run typecheck` (tsc) y así cada suite arranca en milisegundos.
+  transform: {
+    '^.+\\.ts$': ['ts-jest', { diagnostics: false }],
+  },
+  setupFiles: ['<rootDir>/tests/setup-env.js'],
   testEnvironment: 'node',
   roots: ['<rootDir>/tests/unit'],
   testMatch: ['**/*.test.ts'],

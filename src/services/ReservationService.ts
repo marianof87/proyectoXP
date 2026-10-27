@@ -1,6 +1,12 @@
 /** HU-03 Reserva de salas, HU-04 Visualizacion, HU-06 Cancelacion, HU-11 Estados/Idempotencia. */
 
-import { ReservationResponse, ReservationStatus, toReservationResponse } from '../models';
+import { EventBus } from '../events/EventBus';
+import {
+  Reservation,
+  ReservationResponse,
+  ReservationStatus,
+  toReservationResponse,
+} from '../models';
 import {
   ConflictError,
   NotFoundError,
@@ -16,6 +22,9 @@ export interface BookRoomInput {
 }
 
 const MS_PER_HOUR = 1000 * 60 * 60;
+
+/** Dinero a 2 decimales (columnas DECIMAL(12,2) en la BD). */
+const roundCents = (value: number): number => Math.round(value * 100) / 100;
 
 /**
  * HU-11 (Actividad A): tabla de transiciones para `advanceStatus`. No incluye
@@ -33,88 +42,113 @@ export class ReservationService {
   constructor(
     private readonly uow: IUnitOfWork,
     /** Inyectado para poder fijar "ahora" en las pruebas. */
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    /** HU-12: opcional; si falta, el servicio funciona igual sin publicar. */
+    private readonly events?: EventBus
   ) {}
+
+  /** Reservas en un rango, para el calendario (HU-12). */
+  async getCalendar(from: Date, to: Date): Promise<ReservationResponse[]> {
+    const reservations = await this.uow.reservations.findBetween(from, to);
+    return reservations.map(toReservationResponse);
+  }
 
   /**
    * `idempotencyKey` es opcional (HU-11, Actividad B): si se repite una
    * petición con la misma clave, se devuelve la reserva creada la primera
-   * vez en lugar de procesar el pago de nuevo. Sin clave, se comporta igual
-   * que antes de HU-11.
+   * vez en lugar de procesar el pago de nuevo.
+   *
+   * HU-12: toda la lógica (comprobaciones + escritura) corre dentro de UNA
+   * transacción. La garantía contra carreras no depende del código sino de
+   * la base de datos: restricción de exclusión para el solape y débito
+   * condicional atómico para el saldo. Si algo falla se revierte solo esta
+   * operación y las demás peticiones siguen su curso.
    */
   async bookRoom(
     input: BookRoomInput,
     idempotencyKey?: string
   ): Promise<ReservationResponse> {
-    if (idempotencyKey) {
-      const existing = await this.uow.idempotencyKeys.findByKey(idempotencyKey);
-      if (existing) {
-        const reservation = await this.uow.reservations.findById(
-          existing.reservationId
-        );
-        if (reservation) {
-          return toReservationResponse(reservation);
-        }
-      }
-    }
-
     this.validateDateRange(input.startDate, input.endDate);
 
-    const room = await this.uow.rooms.findById(input.roomId);
-    if (!room) {
-      throw new NotFoundError('Room not found');
-    }
+    let isNew = false;
+    try {
+      const reservation = await this.uow.transaction(async (tx) => {
+        isNew = false;
+        if (idempotencyKey) {
+          const replay = await this.findByIdempotencyKey(tx, idempotencyKey);
+          if (replay) return replay;
+        }
 
-    const user = await this.uow.users.findById(input.userId);
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
+        const room = await tx.rooms.findById(input.roomId);
+        if (!room) {
+          throw new NotFoundError('Room not found');
+        }
 
-    const overlapping = await this.uow.reservations.findOverlapping(
-      input.roomId,
-      input.startDate,
-      input.endDate
-    );
-    if (overlapping.length > 0) {
-      throw new ConflictError('Room not available for selected time');
-    }
+        const user = await tx.users.findById(input.userId);
+        if (!user) {
+          throw new NotFoundError('User not found');
+        }
 
-    const hours =
-      (input.endDate.getTime() - input.startDate.getTime()) / MS_PER_HOUR;
-    const totalCost = hours * room.hourlyRate;
+        // Comprobación amistosa; el garante real es la restricción en BD.
+        const overlapping = await tx.reservations.findOverlapping(
+          input.roomId,
+          input.startDate,
+          input.endDate
+        );
+        if (overlapping.length > 0) {
+          throw new ConflictError('Room not available for selected time');
+        }
 
-    if (user.balance < totalCost) {
-      throw new ValidationError('Insufficient balance');
-    }
+        const hours =
+          (input.endDate.getTime() - input.startDate.getTime()) / MS_PER_HOUR;
+        const totalCost = roundCents(hours * room.hourlyRate);
 
-    // Crear la reserva, descontar el saldo y guardar la clave de idempotencia
-    // deben ocurrir juntos o no ocurrir.
-    const reservation = await this.uow.transaction(async (tx) => {
-      const created = await tx.reservations.create({
-        userId: input.userId,
-        roomId: input.roomId,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        status: 'CONFIRMED',
-        totalCost,
+        // Débito atómico: 0 filas afectadas = saldo insuficiente.
+        const debited = await tx.users.debitIfSufficient(input.userId, totalCost);
+        if (!debited) {
+          throw new ValidationError('Insufficient balance');
+        }
+
+        const created = await tx.reservations.create({
+          userId: input.userId,
+          roomId: input.roomId,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          status: 'CONFIRMED',
+          totalCost,
+        });
+
+        if (idempotencyKey) {
+          await tx.idempotencyKeys.save(idempotencyKey, created.id);
+        }
+
+        isNew = true;
+        return created;
       });
 
-      await tx.users.incrementBalance(input.userId, -totalCost);
-
-      if (idempotencyKey) {
-        await tx.idempotencyKeys.save(idempotencyKey, created.id);
+      const response = toReservationResponse(reservation);
+      // Solo tras el commit, y no en una repetición idempotente.
+      if (isNew) this.events?.publish('reservation.created', response);
+      return response;
+    } catch (error) {
+      // Carrera con la misma clave: la petición ganadora ya confirmó; se
+      // devuelve su reserva en lugar de un error.
+      if (idempotencyKey && error instanceof ConflictError) {
+        const replay = await this.findByIdempotencyKey(this.uow, idempotencyKey);
+        if (replay) return toReservationResponse(replay);
       }
-
-      return created;
-    });
-
-    return toReservationResponse(reservation);
+      this.publishRejection(error, input);
+      throw error;
+    }
   }
 
   /**
    * HU-11 (Actividad A): avanza la reserva hacia adelante (CONFIRMED ->
    * IN_PROGRESS -> COMPLETED), rechazando cualquier otra transición con un
    * error de negocio estructurado (ConflictError, 409).
+   *
+   * HU-12: el cambio es un compare-and-set sobre el estado leído, así dos
+   * avances simultáneos no pueden aplicarse ambos.
    */
   async advanceStatus(
     reservationId: number,
@@ -132,11 +166,20 @@ export class ReservationService {
       );
     }
 
-    const updated = await this.uow.reservations.updateStatus(
+    const updated = await this.uow.reservations.updateStatusIf(
       reservationId,
+      reservation.status,
       targetStatus
     );
-    return toReservationResponse(updated);
+    if (!updated) {
+      const current = await this.uow.reservations.findById(reservationId);
+      throw new ConflictError(
+        `Cannot transition reservation from ${current?.status} to ${targetStatus}`
+      );
+    }
+    const response = toReservationResponse(updated);
+    this.events?.publish('reservation.status', response);
+    return response;
   }
 
   async getUserReservations(userId: number): Promise<ReservationResponse[]> {
@@ -161,12 +204,20 @@ export class ReservationService {
       throw new ValidationError('Cannot cancel a reservation already started');
     }
 
-    // Cancelar y reembolsar también es una única operacion atómica.
+    // Cancelar y reembolsar es una única operación atómica. El cambio de
+    // estado es condicional (HU-12): si otra petición ya canceló, esta falla
+    // y NO reembolsa por segunda vez.
     const updated = await this.uow.transaction(async (tx) => {
-      const cancelled = await tx.reservations.updateStatus(
+      const cancelled = await tx.reservations.updateStatusIf(
         reservationId,
+        'CONFIRMED',
         'CANCELLED'
       );
+      if (!cancelled) {
+        throw new ValidationError(
+          'Only confirmed reservations can be cancelled'
+        );
+      }
 
       await tx.users.incrementBalance(
         reservation.userId,
@@ -176,7 +227,35 @@ export class ReservationService {
       return cancelled;
     });
 
-    return toReservationResponse(updated);
+    const response = toReservationResponse(updated);
+    this.events?.publish('reservation.cancelled', response);
+    return response;
+  }
+
+  private publishRejection(error: unknown, input: BookRoomInput): void {
+    if (!this.events) return;
+    const attempt = {
+      roomId: input.roomId,
+      startDate: input.startDate,
+      endDate: input.endDate,
+    };
+    if (error instanceof ConflictError) {
+      this.events.publishRejected('CONFLICT', attempt);
+    } else if (
+      error instanceof ValidationError &&
+      error.message === 'Insufficient balance'
+    ) {
+      this.events.publishRejected('INSUFFICIENT_BALANCE', attempt);
+    }
+  }
+
+  private async findByIdempotencyKey(
+    repos: IUnitOfWork,
+    key: string
+  ): Promise<Reservation | null> {
+    const existing = await repos.idempotencyKeys.findByKey(key);
+    if (!existing) return null;
+    return repos.reservations.findById(existing.reservationId);
   }
 
   private validateDateRange(startDate: Date, endDate: Date): void {

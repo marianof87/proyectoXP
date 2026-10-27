@@ -32,6 +32,16 @@ export class ConflictError extends DomainError {
   }
 }
 
+/**
+ * 409 - otra petición registró primero la misma X-Idempotency-Key (HU-12).
+ * El servicio la captura y devuelve la reserva original.
+ */
+export class IdempotencyKeyConflictError extends ConflictError {
+  constructor() {
+    super('Idempotency key already used');
+  }
+}
+
 /** 400 - la petición es invalida o viola una regla de negocio. */
 export class ValidationError extends DomainError {
   readonly statusCode = 400;
